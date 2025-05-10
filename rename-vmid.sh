@@ -41,6 +41,18 @@ if (( ${#NEEDS[@]} )); then
   fi
 fi
 
+# 1.5) WARNING DIALOG
+dialog --title "⚠️ WARNING – USE AT YOUR OWN RISK!" \
+  --msgbox "\
+This script renames Proxmox VMIDs after confirmation.
+If you do not fully understand what it does, you risk corrupting your infrastructure.
+Potential bugs – developed in my spare time, with no guarantees despite thorough testing.
+
+For issues or feature requests, please open a ticket at:
+https://github.com/sannier3/proxmox-vmid-updater/issues
+
+USE AT YOUR OWN RISK!" 14 70
+
 ### 2) Select type
 TYPE=$(dialog --stdout --menu "What to rename?" 10 40 2 \
   qemu "QEMU VM" \
