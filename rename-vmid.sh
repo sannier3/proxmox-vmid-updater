@@ -3,8 +3,7 @@ set -euo pipefail
 
 ### ————————————————
 ### Logging setup
-SCRIPT_NAME=$(basename "$0")
-LOGFILE="${PWD}/${SCRIPT_NAME%.*}.log"
+LOGFILE="${PWD}/rename-vmid.sh.log"
 touch "$LOGFILE"
 
 log(){
