@@ -31,7 +31,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/sannier3/proxmox-vmid-up
 1. Become root (`sudo -i` or `su –`) 
 2. Paste the installation command above 
 3. Follow dialogs to select “qemu” or “lxc”, enter old and new VMID, confirm shutdown and summary  
-4. On confirmation, the VMID is migrated everywhere; on cancel or Ctrl-C any lock is released and no changes are made  
+4. On confirmation, the VMID is migrated everywhere
 
 ## Supported storage types
 
