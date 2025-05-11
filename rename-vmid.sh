@@ -50,85 +50,67 @@ https://github.com/sannier3/proxmox-vmid-updater/issues
 
 USE AT YOUR OWN RISK!" 14 70
 
-### 2) Ask old ID and auto-detect type on this node
-HOSTNODE=$(hostname)
-log "Local node: $HOSTNODE"
+### 2) Determine cluster nodes (or single node)
+CLUSTER_NODES=()
+if pvecm nodes &>/dev/null; then
+  mapfile -t CLUSTER_NODES < <(pvecm nodes | awk 'NR>1 {print $3}')
+  log "Cluster nodes: ${CLUSTER_NODES[*]}"
+else
+  THIS_NODE=$(hostname)
+  CLUSTER_NODES=("$THIS_NODE")
+  log "Not in a cluster, using local node: $THIS_NODE"
+fi
 
+### 3) Ask old ID, detect TYPE and locate host node, ensure script runs there
 while true; do
-  ID_OLD=$(dialog --stdout --inputbox "Enter current VMID on this node (ESC to quit):" 8 60) || exit 1
+  ID_OLD=$(dialog --stdout --inputbox "Enter current VMID (ESC to quit):" 8 50) || exit 1
   log "Old ID: $ID_OLD"
   [[ -n "$ID_OLD" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
 
-  # Try QEMU VM
-  if pvesh get "/nodes/$HOSTNODE/qemu-server/$ID_OLD" &>/dev/null; then
-    TYPE=qemu
-    break
+  NODE_ASSIGNED=""
+  for N in "${CLUSTER_NODES[@]}"; do
+    if pvesh get "/nodes/$N/qemu-server/$ID_OLD" &>/dev/null; then
+      TYPE=qemu; NODE_ASSIGNED=$N; break
+    elif pvesh get "/nodes/$N/lxc/$ID_OLD" &>/dev/null; then
+      TYPE=lxc; NODE_ASSIGNED=$N; break
+    fi
+  done
+
+  if [[ -z "$NODE_ASSIGNED" ]]; then
+    dialog --msgbox "VMID $ID_OLD not found on any node." 6 50
+    continue
   fi
 
-  # Try LXC Container
-  if pvesh get "/nodes/$HOSTNODE/lxc/$ID_OLD" &>/dev/null; then
-    TYPE=lxc
-    break
+  LOCAL_NODE=$(hostname)
+  if [[ "$NODE_ASSIGNED" != "$LOCAL_NODE" ]]; then
+    dialog --msgbox "\
+VMID $ID_OLD is hosted on node: $NODE_ASSIGNED
+Please run this script on that node." 8 60
+    exit 1
   fi
 
-  dialog --msgbox "VMID $ID_OLD not found on node $HOSTNODE. Please verify and retry." 6 60
+  log "Detected $TYPE VMID $ID_OLD on node $NODE_ASSIGNED"
+  break
 done
-log "Detected type: $TYPE on node $HOSTNODE"
 
-### 3) Ask new ID, verify free (cluster-wide)
+### 4) Ask new ID, verify free across all cluster nodes
 while true; do
   ID_NEW=$(dialog --stdout --inputbox "Enter new free VMID:" 8 40) || exit 1
   log "New ID: $ID_NEW"
   [[ -n "$ID_NEW" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
 
   EXISTS=0
-  # Check across all nodes in cluster
-  mapfile -t ALL_NODES < <(pvecm nodes 2>/dev/null | awk 'NR>1 {print $3}' || echo "$HOSTNODE")
-  for N in "${ALL_NODES[@]}"; do
-    for T in qemu lxc; do
-      if pvesh get "/nodes/$N/$T" --output-format=json 2>/dev/null \
-         | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_NEW"; then
-        EXISTS=1
-        break 2
-      fi
-    done
+  for N in "${CLUSTER_NODES[@]}"; do
+    if pvesh get "/nodes/$N/qemu-server/$ID_NEW" &>/dev/null || \
+       pvesh get "/nodes/$N/lxc/$ID_NEW" &>/dev/null; then
+      EXISTS=1; break
+    fi
   done
 
   (( ! EXISTS )) && break || dialog --msgbox "VMID $ID_NEW already in use." 6 50
 done
 
-### 5) Ask new ID, verify free
-while true; do
-  ID_NEW=$(dialog --stdout --inputbox "Enter new free ID:" 8 40) || exit 1
-  log "New ID: $ID_NEW"
-  [[ -n "$ID_NEW" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
-  EXISTS=0
-  for N in "${CLUSTER_NODES[@]}"; do
-    for T in qemu lxc; do
-      if pvesh get "/nodes/$N/$T" --output-format=json 2>/dev/null \
-         | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_NEW"; then
-        EXISTS=1; break 2
-      fi
-    done
-  done
-  (( ! EXISTS )) && break || dialog --msgbox "ID $ID_NEW already in use." 6 50
-done
-
-### 6) Find host node holding ID_OLD
-NODE_ASSIGNED=""
-for N in "${CLUSTER_NODES[@]}"; do
-  if pvesh get "/nodes/$N/$TYPE" --output-format=json 2>/dev/null \
-     | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_OLD"; then
-    NODE_ASSIGNED=$N; break
-  fi
-done
-if [[ -z "$NODE_ASSIGNED" ]]; then
-  dialog --msgbox "Host node not found for $ID_OLD." 6 50
-  exit 1
-fi
-log "Host node: $NODE_ASSIGNED"
-
-### 7) Locate config file
+### 5) Locate config file
 if [[ "$TYPE" == qemu ]]; then
   CONF_PATH="/etc/pve/nodes/$NODE_ASSIGNED/qemu-server/$ID_OLD.conf"
 else
@@ -141,11 +123,11 @@ fi
 CONF_DIR=$(dirname "$CONF_PATH")
 log "Config: $CONF_PATH"
 
-### 8) Retrieve VM/LXC name from config
+### 6) Retrieve VM/LXC name from config
 NAME=$(grep -E '^name:' "$CONF_PATH" | head -n1 | awk '{print $2}' || echo "unknown")
 log "Name: $NAME"
 
-### 9) Stop instance if needed
+### 7) Stop instance if needed
 if [[ "$TYPE" == qemu ]]; then
   STATE=$(qm status "$ID_OLD" 2>/dev/null | awk '{print $2}')
 else
@@ -173,11 +155,11 @@ if [[ "$STATE" != stopped ]]; then
   } || exit 1
 fi
 
-### 10) Active storages
+### 8) Active storages
 mapfile -t ACTIVE_STORAGES < <(pvesm status | awk 'NR>1 {print $1}')
 log "Storages: ${ACTIVE_STORAGES[*]}"
 
-### 11) Gather block volumes from the main section
+### 9) Gather block volumes from the main section
 mapfile -t VOL_OLD < <(
   sed '/^\[/{q}' "$CONF_PATH" \
     | grep -E '^(scsi|ide|virtio|sata|efidisk|tpmstate|unused)[0-9]+:' \
@@ -186,7 +168,7 @@ mapfile -t VOL_OLD < <(
 )
 log "Raw volumes: ${VOL_OLD[*]}"
 
-### 11b) Gather vmstate entries from all snapshots
+### 10) Gather vmstate entries from all snapshots
 mapfile -t VMSTATE_OLD < <(
   grep -E '^vmstate:' "$CONF_PATH" \
     | sed -E 's/^vmstate:[[:space:]]*//' \
@@ -194,7 +176,7 @@ mapfile -t VMSTATE_OLD < <(
 )
 log "Snapshot states: ${VMSTATE_OLD[*]}"
 
-### 11c) Gather snapshot section names
+### 11) Gather snapshot section names
 mapfile -t SNAP_SECTIONS < <(grep -Po '^\[\K[^\]]+' "$CONF_PATH")
 log "Snapshot sections: ${SNAP_SECTIONS[*]}"
 
@@ -247,6 +229,17 @@ SUMMARY=/tmp/rename_summary.txt
       echo "    $vg/$oldlv → $vg/vm-${ID_NEW}-disk-${oldlv##*-}"
     fi
   done
+    echo; echo "• LVM snapshots:"
+  mapfile -t SNAP_LV_OLD < <(
+    lvs --noheadings -o lv_name,vg_name \
+      | awk '{print $1 ":" $2}' \
+      | grep "^snap_vm-${ID_OLD}-disk-"
+  )
+  for entry in "${SNAP_LV_OLD[@]}"; do
+    old_snap=${entry%%:*}; vg=${entry#*:}
+    suffix=${old_snap#snap_vm-${ID_OLD}-disk-}
+    echo "    $vg/$old_snap → $vg/snap_vm-${ID_NEW}-disk-${suffix}"
+  done
   echo; echo "• File volumes:"
   for vf in "${FILE_OLD[@]}"; do echo "    $vf"; done
   echo; echo "• Snapshots (sections):"
@@ -269,7 +262,6 @@ fold -s -w $(( $(tput cols)-4 )) "$SUMMARY" > "${SUMMARY}.wrapped"
 dialog --title "Summary before apply" \
        --textbox "${SUMMARY}.wrapped" $(( $(tput lines)-4 )) $(( $(tput cols)-4 ))
 dialog --yesno "Apply changes?" 8 50 || { log "Aborted"; exit 1; }
-
 log "User confirmed apply"
 
 ### 16) Execute renaming
