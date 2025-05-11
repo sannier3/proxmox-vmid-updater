@@ -113,7 +113,17 @@ if [[ -z "$NODE_ASSIGNED" ]]; then
 fi
 log "Host node: $NODE_ASSIGNED"
 
-### 7) Locate config file
+### 7) Retrieve VM/LXC name
+if [[ "$TYPE" == qemu ]]; then
+  NAME=$(pvesh get /nodes/$NODE_ASSIGNED/qemu-server/$ID_OLD --output-format=json \
+         | grep -Po '"name"\s*:\s*"\K[^"]+' || echo "unknown")
+else
+  NAME=$(pvesh get /nodes/$NODE_ASSIGNED/lxc/$ID_OLD --output-format=json \
+         | grep -Po '"hostname"\s*:\s*"\K[^"]+' || echo "unknown")
+fi
+log "Name: $NAME"
+
+### 8) Locate config file
 if [[ "$TYPE" == qemu ]]; then
   CONF_PATH="/etc/pve/nodes/$NODE_ASSIGNED/qemu-server/$ID_OLD.conf"
 else
@@ -126,7 +136,7 @@ fi
 CONF_DIR=$(dirname "$CONF_PATH")
 log "Config: $CONF_PATH"
 
-### 8) Stop instance if needed
+### 9) Stop instance if needed
 if [[ "$TYPE" == qemu ]]; then
   STATE=$(qm status "$ID_OLD" 2>/dev/null | awk '{print $2}')
 else
@@ -154,11 +164,11 @@ if [[ "$STATE" != stopped ]]; then
   } || exit 1
 fi
 
-### 9) Active storages
+### 10) Active storages
 mapfile -t ACTIVE_STORAGES < <(pvesm status | awk 'NR>1 {print $1}')
 log "Storages: ${ACTIVE_STORAGES[*]}"
 
-### 10) Gather block volumes from the main section
+### 11) Gather block volumes from the main section
 mapfile -t VOL_OLD < <(
   sed '/^\[/{q}' "$CONF_PATH" \
     | grep -E '^(scsi|ide|virtio|sata|efidisk|tpmstate|unused)[0-9]+:' \
@@ -167,7 +177,7 @@ mapfile -t VOL_OLD < <(
 )
 log "Raw volumes: ${VOL_OLD[*]}"
 
-### 10b) Gather vmstate entries from all snapshots
+### 11b) Gather vmstate entries from all snapshots
 mapfile -t VMSTATE_OLD < <(
   grep -E '^vmstate:' "$CONF_PATH" \
     | sed -E 's/^vmstate:[[:space:]]*//' \
@@ -175,11 +185,11 @@ mapfile -t VMSTATE_OLD < <(
 )
 log "Snapshot states: ${VMSTATE_OLD[*]}"
 
-### 10c) Gather snapshot section names
+### 11c) Gather snapshot section names
 mapfile -t SNAP_SECTIONS < <(grep -Po '^\[\K[^\]]+' "$CONF_PATH")
 log "Snapshot sections: ${SNAP_SECTIONS[*]}"
 
-### 11) Classify volumes LVM vs file
+### 12) Classify volumes LVM vs file
 LVM_OLD=()
 FILE_OLD=()
 for vol in "${VOL_OLD[@]}"; do
@@ -200,7 +210,7 @@ mapfile -t FILE_OLD < <(printf "%s\n" "${FILE_OLD[@]}" | sort -u)
 log "LVM volumes: ${LVM_OLD[*]}"
 log "File volumes (deduped): ${FILE_OLD[*]}"
 
-### 12) Gather backups
+### 13) Gather backups
 BKDIRS=(/var/lib/vz/dump /mnt/pve/*/dump)
 BK_OLD=()
 for d in "${BKDIRS[@]}"; do
@@ -211,11 +221,11 @@ for d in "${BKDIRS[@]}"; do
 done
 log "Backups found: ${#BK_OLD[@]} files"
 
-### 13) Build summary
+### 14) Build summary
 SUMMARY=/tmp/rename_summary.txt
 :> "$SUMMARY"
 {
-  echo "🚀 Renaming $TYPE $ID_OLD → $ID_NEW (host $NODE_ASSIGNED)"
+  echo "🚀 Renaming $TYPE '$NAME' (ID $ID_OLD) → ID $ID_NEW"
   echo "------------------------------------------------------"
   echo; echo "• Config:"
   echo "    $CONF_PATH → $CONF_DIR/$ID_NEW.conf"
@@ -275,20 +285,18 @@ SUMMARY=/tmp/rename_summary.txt
   echo; echo "• Pools & ACL (/etc/pve/user.cfg):"
   echo "    Global replace '$ID_OLD' → '$ID_NEW'"
 } >> "$SUMMARY"
+fold -s -w $(( $(tput cols)-4 )) "$SUMMARY" > "${SUMMARY}.wrapped"
 
-ROWS=$(tput lines); COLS=$(tput cols)
-HEIGHT=$(( ROWS - 4 )); WIDTH=$(( COLS - 4 ))
-fold -s -w "$WIDTH" "$SUMMARY" > "${SUMMARY}.wrapped"
-
-### 14) Show summary & confirm
+### 15) Show summary & confirm
 dialog --title "Summary before apply" \
-       --textbox "${SUMMARY}.wrapped" "$HEIGHT" "$WIDTH"
+       --textbox "${SUMMARY}.wrapped" $(( $(tput lines)-4 )) $(( $(tput cols)-4 ))
 dialog --yesno "Apply changes?" 8 50 || { log "Aborted"; exit 1; }
+log "User confirmed apply"
 
-### 15) Execute renaming
+### 16) Execute renaming
 log "Applying changes…"
 
-# 15.a) Config
+# 16.a) Config
 if [[ -e "$CONF_PATH" ]]; then
   mv "$CONF_PATH" "$CONF_DIR/$ID_NEW.conf"
   log "Config: $CONF_PATH → $CONF_DIR/$ID_NEW.conf"
@@ -296,7 +304,7 @@ else
   log "⚠️  Config not found, skipped: $CONF_PATH"
 fi
 
-# 15.b) Rename LVM volumes
+# 16.b) Rename LVM volumes
 for vol in "${LVM_OLD[@]}"; do
   st=${vol%%:*}; oldlv=${vol#*:}
   vg=$(pvesh get /storage/"$st" --output-format=json \
@@ -309,7 +317,7 @@ for vol in "${LVM_OLD[@]}"; do
   fi
 done
 
-# 15.c) Rename VM folders (file-based & unused)
+# 16.c) Rename VM folders (file-based & unused)
 declare -A ST_PATH
 for vol in "${FILE_OLD[@]}"; do
   st=${vol%%:*}
@@ -327,7 +335,7 @@ for vol in "${FILE_OLD[@]}"; do
   fi
 done
 
-# 15.d) Rename volumes inside new folder
+# 16.d) Rename volumes inside new folder
 for vol in "${FILE_OLD[@]}"; do
   st=${vol%%:*}; rel=${vol#*:}
   oldf="${ST_PATH[$st]}/images/$ID_NEW/$(basename "$rel")"
@@ -341,7 +349,7 @@ for vol in "${FILE_OLD[@]}"; do
   fi
 done
 
-# 15.e) Rename vmstate files
+# 16.e) Rename vmstate files
 for s in "${VMSTATE_OLD[@]}"; do
   st=${s%%:*}; rel=${s#*:}
   fn=$(basename "$rel")
@@ -357,7 +365,7 @@ for s in "${VMSTATE_OLD[@]}"; do
   fi
 done
 
-# 15.f) Move backups
+# 16.f) Move backups
 for f in "${BK_OLD[@]}"; do
   nf="${f//-$ID_OLD-/-$ID_NEW-}"
   if [[ -e "$f" ]]; then
@@ -368,7 +376,7 @@ for f in "${BK_OLD[@]}"; do
   fi
 done
 
-# 15.g) Update jobs.cfg & replication.cfg
+# 16.g) Update jobs.cfg & replication.cfg
 for f in /etc/pve/jobs.cfg /etc/pve/replication.cfg; do
   if [[ -f "$f" ]]; then
     sed -i "s/\bvmid[[:space:]]\+$ID_OLD\b/vmid $ID_NEW/" "$f"
@@ -376,13 +384,13 @@ for f in /etc/pve/jobs.cfg /etc/pve/replication.cfg; do
   fi
 done
 
-# 15.h) Pools & ACL
+# 16.h) Pools & ACL
 if sed -i "s/\b$ID_OLD\b/$ID_NEW/g" /etc/pve/user.cfg; then
   log "Updated pools & ACL"
 else
   log "⚠️  Failed to update ACL (skipped)"
 fi
 
-### 16) Done
-dialog --msgbox "✅ Renamed $TYPE $ID_OLD → $ID_NEW" 6 50
+### 17) Final message
+dialog --msgbox "✅ Renamed $TYPE '$NAME' (ID $ID_OLD) → ID $ID_NEW" 6 50
 clear
