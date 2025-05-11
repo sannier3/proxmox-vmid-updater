@@ -38,7 +38,7 @@ if (( ${#NEEDS[@]} )); then
   fi
 fi
 
-# 1.5) WARNING DIALOG
+### 1.5) WARNING DIALOG
 dialog --title "⚠️ WARNING – USE AT YOUR OWN RISK!" \
   --msgbox "\
 This script renames Proxmox VMIDs after confirmation.
@@ -50,36 +50,51 @@ https://github.com/sannier3/proxmox-vmid-updater/issues
 
 USE AT YOUR OWN RISK!" 14 70
 
-### 2) Select type
-TYPE=$(dialog --stdout --menu "What to rename?" 10 40 2 \
-  qemu "QEMU VM" \
-  lxc  "LXC Container") || exit 1
-log "Type: $TYPE"
+### 2) Ask old ID and auto-detect type on this node
+HOSTNODE=$(hostname)
+log "Local node: $HOSTNODE"
 
-### 3) Determine cluster nodes (or single node)
-CLUSTER_NODES=()
-if pvecm nodes &>/dev/null; then
-  mapfile -t CLUSTER_NODES < <(pvecm nodes | awk 'NR>1 {print $3}')
-  log "Cluster nodes: ${CLUSTER_NODES[*]}"
-else
-  NODE=$(hostname)
-  CLUSTER_NODES=("$NODE")
-  log "Not in a cluster, using local node: $NODE"
-fi
-
-### 4) Ask old ID, verify exists
 while true; do
-  ID_OLD=$(dialog --stdout --inputbox "Enter current ID (ESC to quit):" 8 40) || exit 1
+  ID_OLD=$(dialog --stdout --inputbox "Enter current VMID on this node (ESC to quit):" 8 60) || exit 1
   log "Old ID: $ID_OLD"
   [[ -n "$ID_OLD" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
-  FOUND=0
-  for N in "${CLUSTER_NODES[@]}"; do
-    if pvesh get "/nodes/$N/$TYPE" --output-format=json 2>/dev/null \
-       | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_OLD"; then
-      FOUND=1; break
-    fi
+
+  # Try QEMU VM
+  if pvesh get "/nodes/$HOSTNODE/qemu-server/$ID_OLD" &>/dev/null; then
+    TYPE=qemu
+    break
+  fi
+
+  # Try LXC Container
+  if pvesh get "/nodes/$HOSTNODE/lxc/$ID_OLD" &>/dev/null; then
+    TYPE=lxc
+    break
+  fi
+
+  dialog --msgbox "VMID $ID_OLD not found on node $HOSTNODE. Please verify and retry." 6 60
+done
+log "Detected type: $TYPE on node $HOSTNODE"
+
+### 3) Ask new ID, verify free (cluster-wide)
+while true; do
+  ID_NEW=$(dialog --stdout --inputbox "Enter new free VMID:" 8 40) || exit 1
+  log "New ID: $ID_NEW"
+  [[ -n "$ID_NEW" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
+
+  EXISTS=0
+  # Check across all nodes in cluster
+  mapfile -t ALL_NODES < <(pvecm nodes 2>/dev/null | awk 'NR>1 {print $3}' || echo "$HOSTNODE")
+  for N in "${ALL_NODES[@]}"; do
+    for T in qemu lxc; do
+      if pvesh get "/nodes/$N/$T" --output-format=json 2>/dev/null \
+         | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_NEW"; then
+        EXISTS=1
+        break 2
+      fi
+    done
   done
-  (( FOUND )) && break || dialog --msgbox "ID $ID_OLD not found." 6 50
+
+  (( ! EXISTS )) && break || dialog --msgbox "VMID $ID_NEW already in use." 6 50
 done
 
 ### 5) Ask new ID, verify free
@@ -223,59 +238,28 @@ SUMMARY=/tmp/rename_summary.txt
   echo "------------------------------------------------------"
   echo; echo "• Config:"
   echo "    $CONF_PATH → $CONF_DIR/$ID_NEW.conf"
-  echo
-
-  echo "• LVM volumes:"
+  echo; echo "• LVM volumes:"
   for vol in "${LVM_OLD[@]}"; do
     st=${vol%%:*}; oldlv=${vol#*:}
     vg=$(pvesh get /storage/"$st" --output-format=json \
          | grep -Po '"vgname"\s*:\s*"\K[^"]+' || echo "")
-    if [[ -z "$vg" ]]; then
-      echo "    ❌ SKIP: no VG for $vol"
-    else
-      newlv="vm-${ID_NEW}-disk-${oldlv##*-}"
-      echo "    $vg/$oldlv → $vg/$newlv"
+    if [[ -n "$vg" ]]; then
+      echo "    $vg/$oldlv → $vg/vm-${ID_NEW}-disk-${oldlv##*-}"
     fi
   done
-  echo; echo "• LVM snapshots:"
-  mapfile -t SNAP_LV_OLD < <(
-    lvs --noheadings -o lv_name,vg_name \
-      | awk '{print $1 ":" $2}' \
-      | grep "^snap_vm-${ID_OLD}-disk-"
-  )
-  for entry in "${SNAP_LV_OLD[@]}"; do
-    old_snap=${entry%%:*}; vg=${entry#*:}
-    suffix=${old_snap#snap_vm-${ID_OLD}-disk-}
-    echo "    $vg/$old_snap → $vg/snap_vm-${ID_NEW}-disk-${suffix}"
-  done
-
-  echo; echo "• Disk volumes (file & unused):"
-  for vol in "${FILE_OLD[@]}"; do
-    echo "    $vol"
-  done
-
+  echo; echo "• File volumes:"
+  for vf in "${FILE_OLD[@]}"; do echo "    $vf"; done
   echo; echo "• Snapshots (sections):"
-  for sec in "${SNAP_SECTIONS[@]}"; do
-    echo "    [$sec]"
-  done
-
-  echo; echo "• Snapshot states (vmstate):"
-  for s in "${VMSTATE_OLD[@]}"; do
-    echo "    $s → ${s//$ID_OLD/$ID_NEW}"
-  done
-
+  for s in "${SNAP_SECTIONS[@]}"; do echo "    [$s]"; done
+  echo; echo "• VMSTATE entries:"
+  for s in "${VMSTATE_OLD[@]}"; do echo "    $s → ${s//$ID_OLD/$ID_NEW}"; done
   echo; echo "• Backups:"
-  for f in "${BK_OLD[@]}"; do
-    b2=${f//-$ID_OLD-/-$ID_NEW-}
-    echo "    $f → $b2"
-  done
-
+  for f in "${BK_OLD[@]}"; do echo "    $f → ${f//-$ID_OLD-/-$ID_NEW-}"; done
   echo; echo "• jobs.cfg & replication.cfg:"
   for f in /etc/pve/jobs.cfg /etc/pve/replication.cfg; do
     [[ -f "$f" ]] && grep -q "vmid.*\b$ID_OLD\b" "$f" \
       && echo "    $f: vmid $ID_OLD → $ID_NEW"
   done
-
   echo; echo "• Pools & ACL (/etc/pve/user.cfg):"
   echo "    Global replace '$ID_OLD' → '$ID_NEW'"
 } >> "$SUMMARY"
@@ -285,6 +269,7 @@ fold -s -w $(( $(tput cols)-4 )) "$SUMMARY" > "${SUMMARY}.wrapped"
 dialog --title "Summary before apply" \
        --textbox "${SUMMARY}.wrapped" $(( $(tput lines)-4 )) $(( $(tput cols)-4 ))
 dialog --yesno "Apply changes?" 8 50 || { log "Aborted"; exit 1; }
+
 log "User confirmed apply"
 
 ### 16) Execute renaming
