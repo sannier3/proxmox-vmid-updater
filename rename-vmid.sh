@@ -69,9 +69,9 @@ while true; do
 
   NODE_ASSIGNED=""
   for N in "${CLUSTER_NODES[@]}"; do
-    if pvesh get "/nodes/$N/qemu-server/$ID_OLD" &>/dev/null; then
+    if pvesh get "/nodes/$N/qemu-server/$ID_OLD" --output-format=json &>/dev/null; then
       TYPE=qemu; NODE_ASSIGNED=$N; break
-    elif pvesh get "/nodes/$N/lxc/$ID_OLD" &>/dev/null; then
+    elif pvesh get "/nodes/$N/lxc/$ID_OLD" --output-format=json &>/dev/null; then
       TYPE=lxc; NODE_ASSIGNED=$N; break
     fi
   done
