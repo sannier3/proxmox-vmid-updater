@@ -7,14 +7,11 @@ LOGFILE="${PWD}/rename-vmid.sh.log"
 touch "$LOGFILE"
 
 log(){
-  local ts
+  local ts msg
   ts="$(date '+%Y-%m-%d %H:%M:%S')"
-  # on formate le message
-  local msg="$ts $*"
-  # on affiche en console et on ajoute à $LOGFILE
+  msg="$ts $*"
   echo "$msg" | tee -a "$LOGFILE"
 }
-
 
 ### 0) Must be root
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -153,8 +150,8 @@ if [[ "$STATE" != stopped ]]; then
       dialog --msgbox "Failed to stop." 6 40
       exit 1
     fi
+    log "Instance stopped"
   } || exit 1
-  log "Instance stopped"
 fi
 
 ### 9) Active storages
@@ -199,7 +196,6 @@ for vol in "${VOL_OLD[@]}"; do
     FILE_OLD+=("$vol")
   fi
 done
-# dedupe FILE_OLD
 mapfile -t FILE_OLD < <(printf "%s\n" "${FILE_OLD[@]}" | sort -u)
 log "LVM volumes: ${LVM_OLD[*]}"
 log "File volumes (deduped): ${FILE_OLD[*]}"
@@ -293,8 +289,12 @@ dialog --yesno "Apply changes?" 8 50 || { log "Aborted"; exit 1; }
 log "Applying changes…"
 
 # 15.a) Config
-mv "$CONF_PATH" "$CONF_DIR/$ID_NEW.conf"
-log "Config renamed"
+if [[ -e "$CONF_PATH" ]]; then
+  mv "$CONF_PATH" "$CONF_DIR/$ID_NEW.conf"
+  log "Config: $CONF_PATH → $CONF_DIR/$ID_NEW.conf"
+else
+  log "⚠️  Config not found, skipped: $CONF_PATH"
+fi
 
 # 15.b) Rename LVM volumes
 for vol in "${LVM_OLD[@]}"; do
@@ -303,20 +303,10 @@ for vol in "${LVM_OLD[@]}"; do
        | grep -Po '"vgname"\s*:\s*"\K[^"]+' || echo "")
   newlv="vm-${ID_NEW}-disk-${oldlv##*-}"
   if [[ -n "$vg" ]]; then
-    log "Renaming LVM $vg/$oldlv → $vg/$newlv"
     lvrename "$vg" "$oldlv" "$newlv"
     sed -i "s|$st:$oldlv|$st:$newlv|g" "$CONF_DIR/$ID_NEW.conf"
+    log "LVM: $vg/$oldlv → $vg/$newlv"
   fi
-done
-
-# 15.bb) Rename LVM snapshots
-log "Renaming LVM snapshot volumes…"
-for entry in "${SNAP_LV_OLD[@]}"; do
-  old_snap=${entry%%:*}; vg=${entry#*:}
-  suffix=${old_snap#snap_vm-${ID_OLD}-disk-}
-  new_snap="snap_vm-${ID_NEW}-disk-${suffix}"
-  log "  $vg/$old_snap → $vg/$new_snap"
-  lvrename "$vg" "$old_snap" "$new_snap"
 done
 
 # 15.c) Rename VM folders (file-based & unused)
@@ -328,65 +318,70 @@ for vol in "${FILE_OLD[@]}"; do
                    | grep -Po '"path"\s*:\s*"\K[^"]+' )
     oldd="${ST_PATH[$st]}/images/$ID_OLD"
     newd="${ST_PATH[$st]}/images/$ID_NEW"
-    [[ -d "$oldd" ]] && { log "Renaming folder $oldd → $newd"; mv "$oldd" "$newd"; }
+    if [[ -d "$oldd" ]]; then
+      mv "$oldd" "$newd"
+      log "Folder: $oldd → $newd"
+    else
+      log "⚠️  Folder not found, skipped: $oldd"
+    fi
   fi
 done
 
 # 15.d) Rename volumes inside new folder
 for vol in "${FILE_OLD[@]}"; do
   st=${vol%%:*}; rel=${vol#*:}
-  newrel=${rel//$ID_OLD/$ID_NEW}
   oldf="${ST_PATH[$st]}/images/$ID_NEW/$(basename "$rel")"
-  newf="${ST_PATH[$st]}/images/$ID_NEW/$(basename "$newrel")"
+  newf="${ST_PATH[$st]}/images/$ID_NEW/$(basename "${rel//$ID_OLD/$ID_NEW}")"
   if [[ -f "$oldf" ]]; then
-    log "Renaming file $oldf → $newf"
     mv "$oldf" "$newf"
-    sed -i "s|$st:$rel|$st:$newrel|g" "$CONF_DIR/$ID_NEW.conf"
+    sed -i "s|$st:$rel|$st:${rel//$ID_OLD/$ID_NEW}|g" "$CONF_DIR/$ID_NEW.conf"
+    log "File: $oldf → $newf"
+  else
+    log "⚠️  File not found, skipped: $oldf"
   fi
 done
 
-# 15.d bis) Rename vmstate files
+# 15.e) Rename vmstate files
 for s in "${VMSTATE_OLD[@]}"; do
   st=${s%%:*}; rel=${s#*:}
-  filename=$(basename "$rel")
+  fn=$(basename "$rel")
   dir="${ST_PATH[$st]}/images/$ID_NEW"
-  oldfile="$dir/$filename"
-  newfilename=${filename//$ID_OLD/$ID_NEW}
-  newfile="$dir/$newfilename"
+  oldfile="$dir/$fn"
+  newfile="$dir/${fn//$ID_OLD/$ID_NEW}"
   if [[ -f "$oldfile" ]]; then
-    log "Renaming vmstate file $oldfile → $newfile"
     mv "$oldfile" "$newfile"
-    sed -i "s|^vmstate:[[:space:]]*$st:$rel|vmstate: $st:${rel//$ID_OLD/$ID_NEW}|" \
-      "$CONF_DIR/$ID_NEW.conf"
+    sed -i "s|^vmstate:[[:space:]]*$st:$rel|vmstate: $st:${rel//$ID_OLD/$ID_NEW}|" "$CONF_DIR/$ID_NEW.conf"
+    log "VMSTATE: $oldfile → $newfile"
   else
-    log "Skipping missing vmstate file: $oldfile"
+    log "⚠️  VMSTATE file not found, skipped: $oldfile"
   fi
-done
-
-# 15.e) Update vmstate entries in new config
-for s in "${VMSTATE_OLD[@]}"; do
-  newstate=${s//$ID_OLD/$ID_NEW}
-  log "Updating vmstate entry: $s → $newstate"
-  sed -i "s|vmstate:[[:space:]]*$s|vmstate: $newstate|" "$CONF_DIR/$ID_NEW.conf"
 done
 
 # 15.f) Move backups
 for f in "${BK_OLD[@]}"; do
-  b2=${f//-$ID_OLD-/-$ID_NEW-}
-  log "Moving backup $f → $b2"
-  mv "$f" "$b2"
+  nf="${f//-$ID_OLD-/-$ID_NEW-}"
+  if [[ -e "$f" ]]; then
+    mv "$f" "$nf"
+    log "Backup: $f → $nf"
+  else
+    log "⚠️  Backup not found, skipped: $f"
+  fi
 done
 
 # 15.g) Update jobs.cfg & replication.cfg
 for f in /etc/pve/jobs.cfg /etc/pve/replication.cfg; do
-  [[ -f "$f" ]] && \
-    sed -i "s/\bvmid[[:space:]]\+$ID_OLD\b/vmid $ID_NEW/" "$f" && \
+  if [[ -f "$f" ]]; then
+    sed -i "s/\bvmid[[:space:]]\+$ID_OLD\b/vmid $ID_NEW/" "$f"
     log "Updated vmid in $f"
+  fi
 done
 
 # 15.h) Pools & ACL
-sed -i "s/\b$ID_OLD\b/$ID_NEW/g" /etc/pve/user.cfg
-log "Updated pools & ACL"
+if sed -i "s/\b$ID_OLD\b/$ID_NEW/g" /etc/pve/user.cfg; then
+  log "Updated pools & ACL"
+else
+  log "⚠️  Failed to update ACL (skipped)"
+fi
 
 ### 16) Done
 dialog --msgbox "✅ Renamed $TYPE $ID_OLD → $ID_NEW" 6 50
