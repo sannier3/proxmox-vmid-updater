@@ -113,17 +113,7 @@ if [[ -z "$NODE_ASSIGNED" ]]; then
 fi
 log "Host node: $NODE_ASSIGNED"
 
-### 7) Retrieve VM/LXC name
-if [[ "$TYPE" == qemu ]]; then
-  NAME=$(pvesh get /nodes/$NODE_ASSIGNED/qemu-server/$ID_OLD --output-format=json \
-         | grep -Po '"name"\s*:\s*"\K[^"]+' || echo "unknown")
-else
-  NAME=$(pvesh get /nodes/$NODE_ASSIGNED/lxc/$ID_OLD --output-format=json \
-         | grep -Po '"hostname"\s*:\s*"\K[^"]+' || echo "unknown")
-fi
-log "Name: $NAME"
-
-### 8) Locate config file
+### 7) Locate config file
 if [[ "$TYPE" == qemu ]]; then
   CONF_PATH="/etc/pve/nodes/$NODE_ASSIGNED/qemu-server/$ID_OLD.conf"
 else
@@ -135,6 +125,10 @@ if [[ ! -f "$CONF_PATH" ]]; then
 fi
 CONF_DIR=$(dirname "$CONF_PATH")
 log "Config: $CONF_PATH"
+
+### 8) Retrieve VM/LXC name from config
+NAME=$(grep -E '^name:' "$CONF_PATH" | head -n1 | awk '{print $2}' || echo "unknown")
+log "Name: $NAME"
 
 ### 9) Stop instance if needed
 if [[ "$TYPE" == qemu ]]; then
