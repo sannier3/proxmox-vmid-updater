@@ -18,9 +18,9 @@ This script does **not** alter file integrity, never sends data off the nodes it
 • dialog  
 • root privileges  
 
-## Installation (single-line)
+## Usage (single-line)
 
-Run this on any Proxmox node to download & execute the latest version:  
+Run this on any Proxmox node (that contains your vmid) to download & execute the latest version:  
 
 ```
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/sannier3/proxmox-vmid-updater/main/rename-vmid.sh)"
@@ -30,7 +30,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/sannier3/proxmox-vmid-up
 
 1. Become root (`sudo -i` or `su –`) 
 2. Paste the installation command above 
-3. Follow dialogs to select “qemu” or “lxc”, enter old and new VMID, confirm shutdown and summary  
+3. Follow dialogs enter old and new VMID, confirm shutdown and summary  
 4. On confirmation, the VMID is migrated everywhere
 
 ## Supported storage types
