@@ -53,24 +53,29 @@ USE AT YOUR OWN RISK!" 14 70
 ### 2) Determine cluster nodes (or single node)
 CLUSTER_NODES=()
 if pvecm nodes &>/dev/null; then
-  mapfile -t CLUSTER_NODES < <(pvecm nodes | awk 'NR>1 {print $3}')
+  # fetch node list via API, extract "node" fields from JSON
+  mapfile -t CLUSTER_NODES < <(
+    pvesh get /nodes --output-format=json 2>/dev/null \
+      | grep -Po '"node"\s*:\s*"\K[^"]+'
+  )
   log "Cluster nodes: ${CLUSTER_NODES[*]}"
 else
+  # standalone mode: only the current host
   THIS_NODE=$(hostname)
   CLUSTER_NODES=("$THIS_NODE")
   log "Not in a cluster, using local node: $THIS_NODE"
 fi
 
-### 3) Ask old ID, detect TYPE and locate host node, ensure script runs there (with detailed logging)
+### 3) Prompt for old VMID, detect type and host node, ensure running on correct node
 while true; do
   ID_OLD=$(dialog --stdout --inputbox "Enter current VMID (ESC to quit):" 8 50) || exit 1
   log "Step 3: User entered old VMID: $ID_OLD"
   [[ -n "$ID_OLD" ]] || { log "Step 3: Empty VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
 
   NODE_ASSIGNED=""
-  log "Step 3: Scanning for VMID $ID_OLD on cluster nodes: ${CLUSTER_NODES[*]}"
+  log "Step 3: Scanning for VMID $ID_OLD on nodes: ${CLUSTER_NODES[*]}"
 
-  # detect QEMU
+  # check QEMU VMs on each node
   for N in "${CLUSTER_NODES[@]}"; do
     log "Step 3: Checking QEMU VMs on node $N"
     if pvesh get "/nodes/$N/qemu-server" --output-format=json 2>/dev/null \
@@ -79,12 +84,11 @@ while true; do
       NODE_ASSIGNED=$N
       log "Step 3: Found QEMU VM $ID_OLD on node $N"
       break
-    else
-      log "Step 3: QEMU VM $ID_OLD not on node $N"
     fi
+    log "Step 3: QEMU VM $ID_OLD not on node $N"
   done
 
-  # detect LXC if not found as QEMU
+  # if not found as QEMU, check LXC containers
   if [[ -z "$NODE_ASSIGNED" ]]; then
     for N in "${CLUSTER_NODES[@]}"; do
       log "Step 3: Checking LXC containers on node $N"
@@ -94,22 +98,22 @@ while true; do
         NODE_ASSIGNED=$N
         log "Step 3: Found LXC CT $ID_OLD on node $N"
         break
-      else
-        log "Step 3: LXC CT $ID_OLD not on node $N"
       fi
+      log "Step 3: LXC CT $ID_OLD not on node $N"
     done
   fi
 
+  # if still not found, ask again
   if [[ -z "$NODE_ASSIGNED" ]]; then
-    log "Step 3: VMID $ID_OLD not found on any node, prompting user again"
+    log "Step 3: VMID $ID_OLD not found on any node"
     dialog --msgbox "VMID $ID_OLD not found on any node." 6 50
     continue
   fi
 
+  # ensure script is running on the host node
   LOCAL_NODE=$(hostname)
-  log "Step 3: VMID $ID_OLD is assigned to node $NODE_ASSIGNED; script running on $LOCAL_NODE"
+  log "Step 3: VMID $ID_OLD assigned to node $NODE_ASSIGNED; script running on $LOCAL_NODE"
   if [[ "$NODE_ASSIGNED" != "$LOCAL_NODE" ]]; then
-    log "Step 3: Node mismatch, instructing user to rerun on $NODE_ASSIGNED"
     dialog --msgbox "\
 VMID $ID_OLD is hosted on node: $NODE_ASSIGNED
 Please run this script on that node." 8 60
