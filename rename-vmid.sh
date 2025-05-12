@@ -73,27 +73,29 @@ while true; do
   [[ -n "$ID_OLD" ]] || { log "Step 3: Empty VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
 
   NODE_ASSIGNED=""
-  # Try direct QEMU lookup
+  log "Step 3: Scanning for VMID $ID_OLD on nodes: ${CLUSTER_NODES[*]}"
+
+  # try direct QEMU lookup via /qemu/<vmid>
   for N in "${CLUSTER_NODES[@]}"; do
     log "Step 3: Checking QEMU VM $ID_OLD on node $N"
-    if pvesh get "/nodes/$N/qemu-server/$ID_OLD" &>/dev/null; then
+    if pvesh get "/nodes/$N/qemu/$ID_OLD" &>/dev/null; then
       TYPE=qemu
       NODE_ASSIGNED=$N
-      log "Step 3: Found QEMU VM $ID_OLD on $N"
+      log "Step 3: Found QEMU VM $ID_OLD on node $N"
       break
     else
       log "Step 3: QEMU VM $ID_OLD not on node $N"
     fi
   done
 
-  # If not found as QEMU, try direct LXC lookup
+  # if not found as QEMU, try direct LXC lookup via /lxc/<vmid>
   if [[ -z "$NODE_ASSIGNED" ]]; then
     for N in "${CLUSTER_NODES[@]}"; do
       log "Step 3: Checking LXC CT $ID_OLD on node $N"
       if pvesh get "/nodes/$N/lxc/$ID_OLD" &>/dev/null; then
         TYPE=lxc
         NODE_ASSIGNED=$N
-        log "Step 3: Found LXC CT $ID_OLD on $N"
+        log "Step 3: Found LXC CT $ID_OLD on node $N"
         break
       else
         log "Step 3: LXC CT $ID_OLD not on node $N"
@@ -101,14 +103,14 @@ while true; do
     done
   fi
 
-  # If still not found, prompt again
+  # if still not found, prompt again
   if [[ -z "$NODE_ASSIGNED" ]]; then
     log "Step 3: VMID $ID_OLD not found on any node"
     dialog --msgbox "VMID $ID_OLD not found on any node." 6 50
     continue
   fi
 
-  # Ensure we’re on the correct node
+  # ensure we’re on the correct node
   LOCAL_NODE=$(hostname)
   log "Step 3: VMID $ID_OLD is on node $NODE_ASSIGNED; script running on $LOCAL_NODE"
   if [[ "$NODE_ASSIGNED" != "$LOCAL_NODE" ]]; then
