@@ -110,9 +110,9 @@ while true; do
     continue
   fi
 
-  # ensure we’re on the correct node
-  LOCAL_NODE=$(hostname)
-  log "Step 3: VMID $ID_OLD is on node $NODE_ASSIGNED; script running on $LOCAL_NODE"
+    # ensure we’re on the correct node (use short hostname to match Proxmox node names)
+  LOCAL_NODE=$(hostname -s)
+  log "Step 3: VMID $ID_OLD is on node $NODE_ASSIGNED; local short hostname is $LOCAL_NODE"
   if [[ "$NODE_ASSIGNED" != "$LOCAL_NODE" ]]; then
     dialog --msgbox "\
 VMID $ID_OLD is hosted on node: $NODE_ASSIGNED
