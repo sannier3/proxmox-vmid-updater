@@ -68,13 +68,22 @@ while true; do
   [[ -n "$ID_OLD" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
 
   NODE_ASSIGNED=""
+  # detect QEMU
   for N in "${CLUSTER_NODES[@]}"; do
-    if pvesh get "/nodes/$N/qemu-server/$ID_OLD" --output-format=json &>/dev/null; then
+    if pvesh get "/nodes/$N/qemu-server" --output-format=json 2>/dev/null \
+       | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_OLD"; then
       TYPE=qemu; NODE_ASSIGNED=$N; break
-    elif pvesh get "/nodes/$N/lxc/$ID_OLD" --output-format=json &>/dev/null; then
-      TYPE=lxc; NODE_ASSIGNED=$N; break
     fi
   done
+  # if not yet found, detect LXC
+  if [[ -z "$NODE_ASSIGNED" ]]; then
+    for N in "${CLUSTER_NODES[@]}"; do
+      if pvesh get "/nodes/$N/lxc" --output-format=json 2>/dev/null \
+         | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_OLD"; then
+        TYPE=lxc; NODE_ASSIGNED=$N; break
+      fi
+    done
+  fi
 
   if [[ -z "$NODE_ASSIGNED" ]]; then
     dialog --msgbox "VMID $ID_OLD not found on any node." 6 50
