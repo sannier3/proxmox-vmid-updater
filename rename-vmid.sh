@@ -53,66 +53,64 @@ USE AT YOUR OWN RISK!" 14 70
 ### 2) Determine cluster nodes (or single node)
 CLUSTER_NODES=()
 if pvecm nodes &>/dev/null; then
-  # fetch node list via API, extract "node" fields from JSON
+  # Fetch node list via API, extract "node" fields from JSON
   mapfile -t CLUSTER_NODES < <(
     pvesh get /nodes --output-format=json 2>/dev/null \
       | grep -Po '"node"\s*:\s*"\K[^"]+'
   )
   log "Cluster nodes: ${CLUSTER_NODES[*]}"
 else
-  # standalone mode: only the current host
+  # Standalone mode: only the local host
   THIS_NODE=$(hostname)
   CLUSTER_NODES=("$THIS_NODE")
   log "Not in a cluster, using local node: $THIS_NODE"
 fi
 
-### 3) Prompt for old VMID, detect type and host node, ensure running on correct node
+### 3) Prompt for old VMID, detect TYPE and host node (direct lookup)
 while true; do
   ID_OLD=$(dialog --stdout --inputbox "Enter current VMID (ESC to quit):" 8 50) || exit 1
   log "Step 3: User entered old VMID: $ID_OLD"
   [[ -n "$ID_OLD" ]] || { log "Step 3: Empty VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
 
   NODE_ASSIGNED=""
-  log "Step 3: Scanning for VMID $ID_OLD on nodes: ${CLUSTER_NODES[*]}"
-
-  # check QEMU VMs on each node
+  # Try direct QEMU lookup
   for N in "${CLUSTER_NODES[@]}"; do
-    log "Step 3: Checking QEMU VMs on node $N"
-    if pvesh get "/nodes/$N/qemu-server" --output-format=json 2>/dev/null \
-       | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_OLD"; then
+    log "Step 3: Checking QEMU VM $ID_OLD on node $N"
+    if pvesh get "/nodes/$N/qemu-server/$ID_OLD" &>/dev/null; then
       TYPE=qemu
       NODE_ASSIGNED=$N
-      log "Step 3: Found QEMU VM $ID_OLD on node $N"
+      log "Step 3: Found QEMU VM $ID_OLD on $N"
       break
+    else
+      log "Step 3: QEMU VM $ID_OLD not on node $N"
     fi
-    log "Step 3: QEMU VM $ID_OLD not on node $N"
   done
 
-  # if not found as QEMU, check LXC containers
+  # If not found as QEMU, try direct LXC lookup
   if [[ -z "$NODE_ASSIGNED" ]]; then
     for N in "${CLUSTER_NODES[@]}"; do
-      log "Step 3: Checking LXC containers on node $N"
-      if pvesh get "/nodes/$N/lxc" --output-format=json 2>/dev/null \
-         | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_OLD"; then
+      log "Step 3: Checking LXC CT $ID_OLD on node $N"
+      if pvesh get "/nodes/$N/lxc/$ID_OLD" &>/dev/null; then
         TYPE=lxc
         NODE_ASSIGNED=$N
-        log "Step 3: Found LXC CT $ID_OLD on node $N"
+        log "Step 3: Found LXC CT $ID_OLD on $N"
         break
+      else
+        log "Step 3: LXC CT $ID_OLD not on node $N"
       fi
-      log "Step 3: LXC CT $ID_OLD not on node $N"
     done
   fi
 
-  # if still not found, ask again
+  # If still not found, prompt again
   if [[ -z "$NODE_ASSIGNED" ]]; then
     log "Step 3: VMID $ID_OLD not found on any node"
     dialog --msgbox "VMID $ID_OLD not found on any node." 6 50
     continue
   fi
 
-  # ensure script is running on the host node
+  # Ensure we’re on the correct node
   LOCAL_NODE=$(hostname)
-  log "Step 3: VMID $ID_OLD assigned to node $NODE_ASSIGNED; script running on $LOCAL_NODE"
+  log "Step 3: VMID $ID_OLD is on node $NODE_ASSIGNED; script running on $LOCAL_NODE"
   if [[ "$NODE_ASSIGNED" != "$LOCAL_NODE" ]]; then
     dialog --msgbox "\
 VMID $ID_OLD is hosted on node: $NODE_ASSIGNED
