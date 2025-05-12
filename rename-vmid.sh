@@ -69,8 +69,21 @@ fi
 ### 3) Prompt for old VMID, detect TYPE and host node (direct lookup)
 while true; do
   ID_OLD=$(dialog --stdout --inputbox "Enter current VMID (ESC to quit):" 8 50) || exit 1
+  # --- sanitize & validate ---
+  # remove any whitespace/tabs/newlines
+  ID_OLD=${ID_OLD//[$'\t\r\n ']/}
+  # must be all digits
+  if ! [[ $ID_OLD =~ ^[0-9]+$ ]]; then
+    dialog --msgbox "Invalid VMID ‘$ID_OLD’: only digits are allowed." 6 50
+    continue
+  fi
+  # must be in Proxmox default range
+  if (( ID_OLD < 100 || ID_OLD > 1000000 )); then
+    dialog --msgbox "VMID must be between 100 and 1000000 (got $ID_OLD)." 6 50
+    continue
+  fi
+  # -----------------------------
   log "User entered VMID: $ID_OLD"
-  [[ -n "$ID_OLD" ]] || { log "Empty VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
 
   NODE_ASSIGNED=""
   log "Scanning for VMID $ID_OLD on nodes: ${CLUSTER_NODES[*]}"
@@ -121,8 +134,18 @@ done
 ### 4) Prompt for new VMID, show occupant and suggest next free ID
 while true; do
   ID_NEW=$(dialog --stdout --inputbox "Enter new free VMID:" 8 40) || exit 1
+  # --- sanitize & validate ---
+  ID_NEW=${ID_NEW//[$'\t\r\n ']/}
+  if ! [[ $ID_NEW =~ ^[0-9]+$ ]]; then
+    dialog --msgbox "Invalid VMID ‘$ID_NEW’: only digits are allowed." 6 50
+    continue
+  fi
+  if (( ID_NEW < 100 || ID_NEW > 1000000 )); then
+    dialog --msgbox "VMID must be between 100 and 1000000 (got $ID_NEW)." 6 50
+    continue
+  fi
+  # -----------------------------
   log "User entered new VMID: $ID_NEW"
-  [[ -n "$ID_NEW" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
 
   OCCUPIED=false
   for N in "${CLUSTER_NODES[@]}"; do
