@@ -69,50 +69,44 @@ fi
 ### 3) Prompt for old VMID, detect TYPE and host node (direct lookup)
 while true; do
   ID_OLD=$(dialog --stdout --inputbox "Enter current VMID (ESC to quit):" 8 50) || exit 1
-  log "Step 3: User entered old VMID: $ID_OLD"
-  [[ -n "$ID_OLD" ]] || { log "Step 3: Empty VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
+  log "User entered VMID: $ID_OLD"
+  [[ -n "$ID_OLD" ]] || { log "Empty VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
 
   NODE_ASSIGNED=""
-  log "Step 3: Scanning for VMID $ID_OLD on nodes: ${CLUSTER_NODES[*]}"
+  log "Scanning for VMID $ID_OLD on nodes: ${CLUSTER_NODES[*]}"
 
-  # try direct QEMU lookup via /qemu/<vmid>
+  # try strict QEMU lookup via the /config endpoint
   for N in "${CLUSTER_NODES[@]}"; do
-    log "Step 3: Checking QEMU VM $ID_OLD on node $N"
-    if pvesh get "/nodes/$N/qemu/$ID_OLD" &>/dev/null; then
+    log "Checking QEMU VM $ID_OLD on node $N"
+    if pvesh get "/nodes/$N/qemu/$ID_OLD/config" &>/dev/null; then
       TYPE=qemu
       NODE_ASSIGNED=$N
-      log "Step 3: Found QEMU VM $ID_OLD on node $N"
+      log "Found QEMU VM $ID_OLD on node $N"
       break
-    else
-      log "Step 3: QEMU VM $ID_OLD not on node $N"
     fi
   done
 
-  # if not found as QEMU, try direct LXC lookup via /lxc/<vmid>
+  # if not found as QEMU, try strict LXC lookup
   if [[ -z "$NODE_ASSIGNED" ]]; then
     for N in "${CLUSTER_NODES[@]}"; do
-      log "Step 3: Checking LXC CT $ID_OLD on node $N"
-      if pvesh get "/nodes/$N/lxc/$ID_OLD" &>/dev/null; then
+      log "Checking LXC CT $ID_OLD on node $N"
+      if pvesh get "/nodes/$N/lxc/$ID_OLD/config" &>/dev/null; then
         TYPE=lxc
         NODE_ASSIGNED=$N
-        log "Step 3: Found LXC CT $ID_OLD on node $N"
+        log "Found LXC CT $ID_OLD on node $N"
         break
-      else
-        log "Step 3: LXC CT $ID_OLD not on node $N"
       fi
     done
   fi
 
-  # if still not found, prompt again
   if [[ -z "$NODE_ASSIGNED" ]]; then
-    log "Step 3: VMID $ID_OLD not found on any node"
+    log "VMID $ID_OLD not found on any node"
     dialog --msgbox "VMID $ID_OLD not found on any node." 6 50
     continue
   fi
 
-    # ensure we’re on the correct node (use short hostname to match Proxmox node names)
   LOCAL_NODE=$(hostname -s)
-  log "Step 3: VMID $ID_OLD is on node $NODE_ASSIGNED; local short hostname is $LOCAL_NODE"
+  log "VMID $ID_OLD is on node $NODE_ASSIGNED; local short hostname is $LOCAL_NODE"
   if [[ "$NODE_ASSIGNED" != "$LOCAL_NODE" ]]; then
     dialog --msgbox "\
 VMID $ID_OLD is hosted on node: $NODE_ASSIGNED
@@ -120,7 +114,7 @@ Please run this script on that node." 8 60
     exit 1
   fi
 
-  log "Step 3: Successfully detected $TYPE VMID $ID_OLD on node $NODE_ASSIGNED"
+  log "Detected $TYPE VMID $ID_OLD on node $NODE_ASSIGNED"
   break
 done
 
@@ -210,6 +204,14 @@ log "Snapshot states: ${VMSTATE_OLD[*]}"
 ### 11) Gather snapshot section names
 mapfile -t SNAP_SECTIONS < <(grep -Po '^\[\K[^\]]+' "$CONF_PATH")
 log "Snapshot sections: ${SNAP_SECTIONS[*]}"
+
+### 11.a) Gather existing LVM snapshot volumes
+mapfile -t SNAP_LV_OLD < <(
+  lvs --noheadings -o lv_name,vg_name \
+    | awk '{print $1 ":" $2}' \
+    | grep "^snap_vm-${ID_OLD}-disk-"
+)
+log "Raw LVM snapshot volumes: ${SNAP_LV_OLD[*]}"
 
 ### 12) Classify volumes LVM vs file
 LVM_OLD=()
