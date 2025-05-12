@@ -225,7 +225,7 @@ log "Storages: ${ACTIVE_STORAGES[*]}"
 ### 9) Gather block volumes from the main section
 mapfile -t VOL_OLD < <(
   sed '/^\[/{q}' "$CONF_PATH" \
-    | grep -E '^(scsi|ide|virtio|sata|efidisk|tpmstate|unused)[0-9]+:' \
+    | grep -E '^(scsi|ide|virtio|sata|efidisk|tpmstate|unused)[0-9]+:|^(rootfs|mp[0-9]+):' \
     | sed -E 's/^[^:]+:[[:space:]]*//' \
     | cut -d',' -f1
 )
@@ -311,8 +311,10 @@ SUMMARY=/tmp/rename_summary.txt
     suffix=${old_snap#snap_vm-${ID_OLD}-disk-}
     echo "    $vg/$old_snap → $vg/snap_vm-${ID_NEW}-disk-${suffix}"
   done
-  echo; echo "• File volumes:"
-  for vf in "${FILE_OLD[@]}"; do echo "    $vf"; done
+  echo; echo "• Disques et points de montage (file-based):"
+  for vf in "${FILE_OLD[@]}"; do
+    echo "    $vf"
+  done
   echo; echo "• Snapshots (sections):"
   for s in "${SNAP_SECTIONS[@]}"; do echo "    [$s]"; done
   echo; echo "• VMSTATE entries:"
