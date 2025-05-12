@@ -61,44 +61,62 @@ else
   log "Not in a cluster, using local node: $THIS_NODE"
 fi
 
-### 3) Ask old ID, detect TYPE and locate host node, ensure script runs there
+### 3) Ask old ID, detect TYPE and locate host node, ensure script runs there (with detailed logging)
 while true; do
   ID_OLD=$(dialog --stdout --inputbox "Enter current VMID (ESC to quit):" 8 50) || exit 1
-  log "Old ID: $ID_OLD"
-  [[ -n "$ID_OLD" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
+  log "Step 3: User entered old VMID: $ID_OLD"
+  [[ -n "$ID_OLD" ]] || { log "Step 3: Empty VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
 
   NODE_ASSIGNED=""
+  log "Step 3: Scanning for VMID $ID_OLD on cluster nodes: ${CLUSTER_NODES[*]}"
+
   # detect QEMU
   for N in "${CLUSTER_NODES[@]}"; do
+    log "Step 3: Checking QEMU VMs on node $N"
     if pvesh get "/nodes/$N/qemu-server" --output-format=json 2>/dev/null \
        | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_OLD"; then
-      TYPE=qemu; NODE_ASSIGNED=$N; break
+      TYPE=qemu
+      NODE_ASSIGNED=$N
+      log "Step 3: Found QEMU VM $ID_OLD on node $N"
+      break
+    else
+      log "Step 3: QEMU VM $ID_OLD not on node $N"
     fi
   done
-  # if not yet found, detect LXC
+
+  # detect LXC if not found as QEMU
   if [[ -z "$NODE_ASSIGNED" ]]; then
     for N in "${CLUSTER_NODES[@]}"; do
+      log "Step 3: Checking LXC containers on node $N"
       if pvesh get "/nodes/$N/lxc" --output-format=json 2>/dev/null \
          | grep -q "\"vmid\"[[:space:]]*:[[:space:]]*$ID_OLD"; then
-        TYPE=lxc; NODE_ASSIGNED=$N; break
+        TYPE=lxc
+        NODE_ASSIGNED=$N
+        log "Step 3: Found LXC CT $ID_OLD on node $N"
+        break
+      else
+        log "Step 3: LXC CT $ID_OLD not on node $N"
       fi
     done
   fi
 
   if [[ -z "$NODE_ASSIGNED" ]]; then
+    log "Step 3: VMID $ID_OLD not found on any node, prompting user again"
     dialog --msgbox "VMID $ID_OLD not found on any node." 6 50
     continue
   fi
 
   LOCAL_NODE=$(hostname)
+  log "Step 3: VMID $ID_OLD is assigned to node $NODE_ASSIGNED; script running on $LOCAL_NODE"
   if [[ "$NODE_ASSIGNED" != "$LOCAL_NODE" ]]; then
+    log "Step 3: Node mismatch, instructing user to rerun on $NODE_ASSIGNED"
     dialog --msgbox "\
 VMID $ID_OLD is hosted on node: $NODE_ASSIGNED
 Please run this script on that node." 8 60
     exit 1
   fi
 
-  log "Detected $TYPE VMID $ID_OLD on node $NODE_ASSIGNED"
+  log "Step 3: Successfully detected $TYPE VMID $ID_OLD on node $NODE_ASSIGNED"
   break
 done
 
