@@ -118,34 +118,54 @@ Please run this script on that node." 8 60
   break
 done
 
-### 4) Prompt for new VMID, verify it won’t overwrite anything
+### 4) Prompt for new VMID, show occupant and suggest next free ID
 while true; do
   ID_NEW=$(dialog --stdout --inputbox "Enter new free VMID:" 8 40) || exit 1
   log "User entered new VMID: $ID_NEW"
-  [[ -n "$ID_NEW" ]] || { log "Empty new VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
+  [[ -n "$ID_NEW" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
 
-  IN_USE=false
+  OCCUPIED=false
   for N in "${CLUSTER_NODES[@]}"; do
-    log "Checking for existing QEMU config at /nodes/$N/qemu/$ID_NEW/config"
+    # check QEMU
     if pvesh get "/nodes/$N/qemu/$ID_NEW/config" &>/dev/null; then
-      log "QEMU VM $ID_NEW already exists on node $N"
-      IN_USE=true
+      TYPE_OCC=qemu
+      NODE_OCC=$N
+      OCCUPIED=true
       break
     fi
-    log "No QEMU VM $ID_NEW on node $N"
-
-    log "Checking for existing LXC config at /nodes/$N/lxc/$ID_NEW/config"
+    # check LXC
     if pvesh get "/nodes/$N/lxc/$ID_NEW/config" &>/dev/null; then
-      log "LXC CT $ID_NEW already exists on node $N"
-      IN_USE=true
+      TYPE_OCC=lxc
+      NODE_OCC=$N
+      OCCUPIED=true
       break
     fi
-    log "No LXC CT $ID_NEW on node $N"
   done
 
-  if $IN_USE; then
-    dialog --msgbox "VMID $ID_NEW is already in use. Please choose another." 6 50
-    log "New VMID $ID_NEW already in use, retrying"
+  if $OCCUPIED; then
+    # extract the existing VM/CT name
+    NAME_OCC=$(pvesh get "/nodes/$NODE_OCC/$TYPE_OCC/$ID_NEW/config" \
+               --output-format=json \
+             | grep -Po '"name"\s*:\s*"\K[^"]+' || echo "unknown")
+
+    # find next free ID
+    NEXT=$((ID_NEW + 1))
+    while true; do
+      BUSY=false
+      for M in "${CLUSTER_NODES[@]}"; do
+        if pvesh get "/nodes/$M/qemu/$NEXT/config" &>/dev/null || \
+           pvesh get "/nodes/$M/lxc/$NEXT/config" &>/dev/null; then
+          BUSY=true
+          break
+        fi
+      done
+      $BUSY && (( NEXT++ )) || break
+    done
+
+    dialog --msgbox "\
+VMID $ID_NEW is already taken by $TYPE_OCC '$NAME_OCC' on node $NODE_OCC.
+Next available VMID is $NEXT." 8 60
+    log "VMID $ID_NEW occupied by $TYPE_OCC '$NAME_OCC'; suggesting $NEXT"
     continue
   fi
 
