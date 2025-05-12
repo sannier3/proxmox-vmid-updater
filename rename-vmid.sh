@@ -319,6 +319,29 @@ for vol in "${LVM_OLD[@]}"; do
   fi
 done
 
+# 16.b bis) Rename LVM snapshot volumes
+mapfile -t SNAP_LV_OLD < <(
+  lvs --noheadings -o lv_name,vg_name \
+    | awk '{print $1 ":" $2}' \
+    | grep "^snap_vm-${ID_OLD}-disk-"
+)
+for entry in "${SNAP_LV_OLD[@]}"; do
+  old_snap=${entry%%:*}
+  vg=${entry#*:}
+  suffix=${old_snap#snap_vm-${ID_OLD}-disk-}
+  new_snap="snap_vm-${ID_NEW}-disk-${suffix}"
+
+  if lvdisplay "$vg/$old_snap" &>/dev/null; then
+    lvrename "$vg" "$old_snap" "$new_snap"
+    log "LVM snapshot: $vg/$old_snap → $vg/$new_snap"
+  else
+    log "⚠️  Snapshot $vg/$old_snap not found, skipped"
+  fi
+done
+
+# Update any references in the new config file
+sed -i "s/snap_vm-${ID_OLD}-disk-/snap_vm-${ID_NEW}-disk-/g" "$CONF_DIR/$ID_NEW.conf"
+
 # 16.c) Rename VM folders (file-based & unused)
 declare -A ST_PATH
 for vol in "${FILE_OLD[@]}"; do
