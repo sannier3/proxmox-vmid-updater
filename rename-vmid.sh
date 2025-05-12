@@ -118,21 +118,39 @@ Please run this script on that node." 8 60
   break
 done
 
-### 4) Ask new ID, verify free across all cluster nodes
+### 4) Prompt for new VMID, verify it won’t overwrite anything
 while true; do
   ID_NEW=$(dialog --stdout --inputbox "Enter new free VMID:" 8 40) || exit 1
-  log "New ID: $ID_NEW"
-  [[ -n "$ID_NEW" ]] || { dialog --msgbox "Empty ID!" 6 40; continue; }
+  log "User entered new VMID: $ID_NEW"
+  [[ -n "$ID_NEW" ]] || { log "Empty new VMID entered, retrying"; dialog --msgbox "Empty ID!" 6 40; continue; }
 
-  EXISTS=0
+  IN_USE=false
   for N in "${CLUSTER_NODES[@]}"; do
-    if pvesh get "/nodes/$N/qemu-server/$ID_NEW" &>/dev/null || \
-       pvesh get "/nodes/$N/lxc/$ID_NEW" &>/dev/null; then
-      EXISTS=1; break
+    log "Checking for existing QEMU config at /nodes/$N/qemu/$ID_NEW/config"
+    if pvesh get "/nodes/$N/qemu/$ID_NEW/config" &>/dev/null; then
+      log "QEMU VM $ID_NEW already exists on node $N"
+      IN_USE=true
+      break
     fi
+    log "No QEMU VM $ID_NEW on node $N"
+
+    log "Checking for existing LXC config at /nodes/$N/lxc/$ID_NEW/config"
+    if pvesh get "/nodes/$N/lxc/$ID_NEW/config" &>/dev/null; then
+      log "LXC CT $ID_NEW already exists on node $N"
+      IN_USE=true
+      break
+    fi
+    log "No LXC CT $ID_NEW on node $N"
   done
 
-  (( ! EXISTS )) && break || dialog --msgbox "VMID $ID_NEW already in use." 6 50
+  if $IN_USE; then
+    dialog --msgbox "VMID $ID_NEW is already in use. Please choose another." 6 50
+    log "New VMID $ID_NEW already in use, retrying"
+    continue
+  fi
+
+  log "VMID $ID_NEW is free on all nodes"
+  break
 done
 
 ### 5) Locate config file
