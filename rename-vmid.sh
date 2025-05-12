@@ -432,7 +432,10 @@ for vol in "${FILE_OLD[@]}"; do
   newf="${ST_PATH[$st]}/images/$ID_NEW/$(basename "${rel//$ID_OLD/$ID_NEW}")"
   if [[ -f "$oldf" ]]; then
     mv "$oldf" "$newf"
-    sed -i "s|$st:$rel|$st:${rel//$ID_OLD/$ID_NEW}|g" "$CONF_DIR/$ID_NEW.conf"
+    escaped_st=$(printf '%s' "$st" | sed 's/[&/\]/\\&/g')
+    escaped_rel=$(printf '%s' "$rel" | sed 's/[&/\]/\\&/g')
+    escaped_rel_new=$(printf '%s' "${rel//$ID_OLD/$ID_NEW}" | sed 's/[&/\]/\\&/g')
+    sed -i "s|$escaped_st:$escaped_rel|$escaped_st:$escaped_rel_new|g" "$CONF_DIR/$ID_NEW.conf"
     log "File: $oldf → $newf"
   else
     log "⚠️  File not found, skipped: $oldf"
