@@ -210,8 +210,14 @@ CONF_DIR=$(dirname "$CONF_PATH")
 log "Config: $CONF_PATH"
 
 ### 6) Retrieve VM/LXC name from config
-NAME=$(grep -E '^name:' "$CONF_PATH" | head -n1 | awk '{print $2}' || echo "unknown")
-log "Name: $NAME"
+if [[ "$TYPE" == "qemu" ]]; then
+  # QEMU expose le nom sous "name:"
+  NAME=$(grep -E '^name:' "$CONF_PATH" | head -n1 | awk '{print $2}' || echo "unknown")
+else
+  # LXC expose le nom sous "hostname:"
+  NAME=$(grep -E '^hostname:' "$CONF_PATH" | head -n1 | awk '{print $2}' || echo "unknown")
+fi
+log "Instance name: $NAME"
 
 ### 7) Stop instance if needed
 if [[ "$TYPE" == qemu ]]; then
