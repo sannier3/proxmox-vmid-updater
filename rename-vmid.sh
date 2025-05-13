@@ -124,7 +124,7 @@ while true; do
     dialog --msgbox "\
 VMID $ID_OLD is hosted on node: $NODE_ASSIGNED
 Please run this script on that node." 8 60
-    exit 1
+    continue
   fi
 
   log "Detected $TYPE VMID $ID_OLD on node $NODE_ASSIGNED"
@@ -210,8 +210,14 @@ CONF_DIR=$(dirname "$CONF_PATH")
 log "Config: $CONF_PATH"
 
 ### 6) Retrieve VM/LXC name from config
-NAME=$(grep -E '^name:' "$CONF_PATH" | head -n1 | awk '{print $2}' || echo "unknown")
-log "Name: $NAME"
+if [[ "$TYPE" == "qemu" ]]; then
+  # QEMU expose le nom sous "name:"
+  NAME=$(grep -E '^name:' "$CONF_PATH" | head -n1 | awk '{print $2}' || echo "unknown")
+else
+  # LXC expose le nom sous "hostname:"
+  NAME=$(grep -E '^hostname:' "$CONF_PATH" | head -n1 | awk '{print $2}' || echo "unknown")
+fi
+log "Instance name: $NAME"
 
 ### 7) Stop instance if needed
 if [[ "$TYPE" == qemu ]]; then
@@ -294,6 +300,40 @@ done
 mapfile -t FILE_OLD < <(printf "%s\n" "${FILE_OLD[@]}" | sort -u)
 log "LVM volumes: ${LVM_OLD[*]}"
 log "File volumes (deduped): ${FILE_OLD[*]}"
+
+### 12.a) Validate that each discovered disk really exists
+ERRORS=()
+
+# check file-based volumes
+declare -A ST_PATH
+for st in "${ACTIVE_STORAGES[@]}"; do
+  ST_PATH[$st]=$(pvesh get /storage/"$st" --output-format=json \
+                 | grep -Po '"path"\s*:\s*"\K[^"]+')
+done
+for vol in "${FILE_OLD[@]}"; do
+  st=${vol%%:*}
+  image_dir="${ST_PATH[$st]}/images/${ID_OLD}"
+  if [[ ! -d "$image_dir" ]]; then
+    ERRORS+=("File storage '$st' not mounted or missing: expected $image_dir")
+  fi
+done
+
+# check LVM volumes
+for vol in "${LVM_OLD[@]}"; do
+  st=${vol%%:*}; oldlv=${vol#*:}
+  vg=$(pvesh get /storage/"$st" --output-format=json \
+         | grep -Po '"vgname"\s*:\s*"\K[^"]+' )
+  if ! lvdisplay "$vg/$oldlv" &>/dev/null; then
+    ERRORS+=("LVM volume not found: $vg/$oldlv")
+  fi
+done
+
+if (( ${#ERRORS[@]} )); then
+  dialog --title "❌ Disk detection errors" \
+         --msgbox "$(printf '%s\n' "${ERRORS[@]}")" 12 70
+  log "Aborting: disk detection failures: ${ERRORS[*]}"
+  exit 1
+fi
 
 ### 13) Gather backups
 BKDIRS=(/var/lib/vz/dump /mnt/pve/*/dump)
