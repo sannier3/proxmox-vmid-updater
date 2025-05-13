@@ -260,6 +260,51 @@ mapfile -t VOL_OLD < <(
 )
 log "Raw volumes: ${VOL_OLD[*]}"
 
+### 9.a) Verify each disk actually exists
+for vol in "${VOL_OLD[@]}"; do
+  st=${vol%%:*}    # storage ID, e.g. local-lvm, SCSI1-DIR
+  rel=${vol#*:}    # volume spec, e.g. vm-123-disk-0 or 203/vm-203-disk-0.raw
+
+  # get storage info
+  st_json=$(pvesh get /storage/"$st" --output-format=json 2>/dev/null) || st_json=""
+  st_type=$(grep -Po '"type"\s*:\s*"\K[^"]+' <<<"$st_json" || echo "")
+
+  if [[ "$st_type" =~ lvm ]]; then
+    # LVM logical volume must exist
+    vg=$(grep -Po '"vgname"\s*:\s*"\K[^"]+' <<<"$st_json" || echo "")
+    lv_name=${rel##*/}
+    if ! lvdisplay "$vg/$lv_name" &>/dev/null; then
+      dialog --title "❌ Disk not found" \
+             --msgbox "\
+Failed to locate LVM volume:
+  Storage: $st (VG=$vg)
+  Logical volume: $lv_name
+
+Please verify the storage is online and the LV exists." 10 60
+      log "ERROR: Missing LVM volume $vg/$lv_name on storage $st"
+      exit 1
+    fi
+  else
+    # file-based storage: check that the path exists
+    storage_path=$(grep -Po '"path"\s*:\s*"\K[^"]+' <<<"$st_json" || echo "")
+    # volumes on rootfs or mpN are relative under /etc/pve, but typically map into storage_path/images/VMID
+    disk_file="$storage_path/images/$ID_OLD/$(basename "$rel")"
+    if [[ ! -e "$disk_file" ]]; then
+      dialog --title "❌ Disk file not found" \
+             --msgbox "\
+Failed to locate disk file on storage:
+  Storage: $st (path=$storage_path)
+  Expected file: $disk_file
+
+Please verify the filesystem is mounted and the file exists." 10 60
+      log "ERROR: Missing disk file $disk_file on storage $st"
+      exit 1
+    fi
+  fi
+done
+
+log "All virtual disks exist, continuing…"
+
 ### 10) Gather vmstate entries from all snapshots
 mapfile -t VMSTATE_OLD < <(
   grep -E '^vmstate:' "$CONF_PATH" \
