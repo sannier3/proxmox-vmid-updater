@@ -66,6 +66,25 @@ else
   log "Not in a cluster, using local node: $THIS_NODE"
 fi
 
+### 2.5) Quorum check (if in cluster)
+if (( ${#CLUSTER_NODES[@]} > 1 )); then
+  # Extract “Yes” or “No” from the “Quorate:” line, trimming whitespace
+  QSTAT=$(pvecm status 2>/dev/null \
+    | awk -F: '/Quorate:/ { gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')
+  log "Cluster quorum status: $QSTAT"
+  if [[ "$QSTAT" != "Yes" ]]; then
+    dialog --title "❌ No Quorum" \
+           --msgbox "\
+Cluster is not quorate (Quorate: $QSTAT).
+Please restore quorum before proceeding." 8 60
+    log "ERROR: Cluster not quorate ($QSTAT) – aborting"
+    exit 1
+  fi
+  log "Cluster is quorate, proceeding"
+else
+  log "Standalone mode – skipping quorum check"
+fi
+
 while true; do
   ### 3) Prompt for old VMID, detect TYPE and host node (direct lookup)
   while true; do
