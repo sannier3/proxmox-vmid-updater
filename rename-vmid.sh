@@ -274,13 +274,9 @@ while true; do
   ### 9) Gather block volumes from the main section (exclude CD-ROMs)
   mapfile -t VOL_OLD < <(
     sed '/^\[/{q}' "$CONF_PATH" \
-      # match all disk types or mounts…
       | grep -E '^(scsi|ide|virtio|sata|efidisk|tpmstate|unused)[0-9]+:|^(rootfs|mp[0-9]+):' \
-      # drop any cdrom media lines
       | grep -v ',media=cdrom' \
-      # strip the “<key>:” prefix
       | sed -E 's/^[^:]+:[[:space:]]*//' \
-      # take only the first comma-separated field
       | cut -d',' -f1
   )
   log "Raw volumes (excluding CD-ROM): ${VOL_OLD[*]}"
