@@ -552,7 +552,10 @@ Please verify the filesystem is mounted and the file exists." 10 60
     new_ds="${pool}/${newrel}"
 
     # perform the zfs rename
-    zfs rename "$old_ds" "$new_ds"
+    if ! zfs rename "$old_ds" "$new_ds"; then
+      log "ERROR: Failed to rename ZFS dataset from $old_ds to $new_ds"
+      exit 1
+    fi
 
     # update config to reference the new dataset
     sed -i "s|$st:$rel|$st:$newrel|g" "$CONF_DIR/$ID_NEW.conf"
