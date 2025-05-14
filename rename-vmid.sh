@@ -304,51 +304,65 @@ while true; do
   )
   log "Raw volumes (excluding CD-ROM): ${VOL_OLD[*]}"
   
-  ### 9.a) Verify each disk actually exists
+  ### 9.a) Verify each disk actually exists (LVM, ZFS or file-based)
   for vol in "${VOL_OLD[@]}"; do
-    st=${vol%%:*}    # storage ID, e.g. local-lvm, SCSI1-DIR
-    rel=${vol#*:}    # volume spec, e.g. vm-123-disk-0 or 203/vm-203-disk-0.raw
-  
-    # get storage info
-    st_json=$(pvesh get /storage/"$st" --output-format=json 2>/dev/null) || st_json=""
+    st=${vol%%:*}
+    rel=${vol#*:}
+
+    # fetch storage info
+    st_json=$(pvesh get /storage/"$st" --output-format=json 2>/dev/null) || st_json="{}"
     st_type=$(grep -Po '"type"\s*:\s*"\K[^"]+' <<<"$st_json" || echo "")
-  
+
     if [[ "$st_type" =~ lvm ]]; then
-      # LVM logical volume must exist
+      # LVM: check logical volume
       vg=$(grep -Po '"vgname"\s*:\s*"\K[^"]+' <<<"$st_json" || echo "")
       lv_name=${rel##*/}
       if ! lvdisplay "$vg/$lv_name" &>/dev/null; then
-        dialog --title "❌ Disk not found" \
+        dialog --title "❌ LVM volume not found" \
                --msgbox "\
-  Failed to locate LVM volume:
-    Storage: $st (VG=$vg)
-    Logical volume: $lv_name
-  
-  Please verify the storage is online and the LV exists." 10 60
-        log "ERROR: Missing LVM volume $vg/$lv_name on storage $st"
-        clear
-        exit 1
+Failed to locate LVM volume:
+  VG:    $vg
+  LV:    $lv_name
+
+Please verify the storage is online and the LV exists." 10 60
+        log "ERROR: Missing LVM volume $vg/$lv_name on $st"
+        clear; exit 1
       fi
+
+    elif [[ "$st_type" == "zfspool" ]]; then
+      # ZFS: check dataset exists
+      pool=$(grep -Po '"pool"\s*:\s*"\K[^"]+' <<<"$st_json" || echo "")
+      ds_name="${rel}"   # e.g. vm-302-disk-0
+      if ! zfs list "${pool}/${ds_name}" &>/dev/null; then
+        dialog --title "❌ ZFS dataset not found" \
+               --msgbox "\
+Failed to locate ZFS dataset:
+  Pool:    $pool
+  Dataset: ${pool}/${ds_name}
+
+Please verify the ZFS pool is available." 10 60
+        log "ERROR: Missing ZFS dataset ${pool}/${ds_name}"
+        clear; exit 1
+      fi
+
     else
-      # file-based storage: check that the path exists
+      # file-based: check file under images/<VMID>
       storage_path=$(grep -Po '"path"\s*:\s*"\K[^"]+' <<<"$st_json" || echo "")
-      # volumes on rootfs or mpN are relative under /etc/pve, but typically map into storage_path/images/VMID
-      disk_file="$storage_path/images/$ID_OLD/$(basename "$rel")"
+      disk_file="$storage_path/images/$rel"
       if [[ ! -e "$disk_file" ]]; then
         dialog --title "❌ Disk file not found" \
                --msgbox "\
-  Failed to locate disk file on storage:
-    Storage: $st (path=$storage_path)
-    Expected file: $disk_file
-  
-  Please verify the filesystem is mounted and the file exists." 10 60
-        log "ERROR: Missing disk file $disk_file on storage $st"
-        clear
-        exit 1
+Failed to locate disk file on storage:
+  Storage: $st (path=$storage_path)
+  Expected file: $disk_file
+
+Please verify the filesystem is mounted and the file exists." 10 60
+        log "ERROR: Missing disk file $disk_file on $st"
+        clear; exit 1
       fi
     fi
   done
-  
+
   log "All virtual disks exist, continuing…"
   
   ### 10) Gather vmstate entries from all snapshots
