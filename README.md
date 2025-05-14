@@ -1,64 +1,89 @@
-# PROXMOX-VMID-UPDATER
-Interactive Proxmox VM/LXC ID renaming script with automatic logging, safety checks, and storage path updates.
+Here’s the updated **README** for **v1.2.0**, in plain English and natural markdown formatting:
 
-## Description
+---
 
-Interactive Bash script to safely rename a QEMU VM or LXC container VMID on Proxmox VE.  
-• Verifies source ID exists and target ID is free (cluster-wide)  
-• Stops the instance cleanly (with confirmation)  
-• Renames config, LVM volumes and file-based storage (including NFS/CIFS/GlusterFS directories)  
-• Updates snapshots, vmstate, backups, vzdump & replication jobs, firewall rules and ACLs  
-• Logs every action with timestamp to console and rename-vmid.log  
+# PROXMOX-VMID-UPDATER  v1.2.0
 
-This script does **not** alter file integrity, never sends data off the nodes it runs on, and uses only local Proxmox APIs and commands.
+Interactive Bash script to safely rename a QEMU VM or LXC container VMID on Proxmox VE, with:
+
+* **Cluster-wide checks**
+  Verify the source VMID exists and the target VMID is free across all nodes.
+* **Clean shutdown**
+  Prompt and stop the VM/CT if it’s running.
+* **Config renaming**
+  Move `/etc/pve/.../<old>.conf` → `<new>.conf`.
+* **Storage updates**
+
+  * **LVM** volumes (via `lvrename` + config update)
+  * **ZFS** datasets & snapshots (via `zfs rename` + config update)
+  * **File-based** images under `…/images/<VMID>/…` (local FS, NFS, CIFS, GlusterFS, CephFS)
+* **Snapshot & vmstate** entries
+  Renamed both in the config file and on disk.
+* **Backups & jobs**
+  Rename `vzdump`, replication logs and entries to use the new VMID.
+* **Pools & ACLs**
+  Update `/etc/pve/user.cfg` cluster-wide.
+* **Full logging**
+  All operations timestamped to console and `rename-vmid.sh.log`.
+
+---
 
 ## Prerequisites
 
-• Proxmox VE 6.x/7.x (bash, pvesh, pvecm, pvesm, qm, pct)  
-• dialog  
-• root privileges  
+* **Proxmox VE 6.x / 7.x**
+  (commands: `bash`, `pvesh`, `pvecm`, `pvesm`, `qm`, `pct`)
+* **dialog**
+* **Root** privileges
 
-## Usage (single-line)
+---
 
-Run this on any Proxmox node (that contains your vmid) to download & execute the latest version:  
+## Quick Run
 
-```
+```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/sannier3/proxmox-vmid-updater/main/rename-vmid.sh)"
 ```
 
-## Usage
+Then follow the interactive prompts.
 
-1. Become root (`sudo -i` or `su –`) 
-2. Paste the installation command above 
-3. Follow dialogs enter old and new VMID, confirm shutdown and summary  
-4. On confirmation, the VMID is migrated everywhere
+---
 
-## Supported storage types
+## Supported Storage Types
 
-• LVM (lvrename + config update)  
-• File-based image dirs (mv + sed)  
-• Network filesystems (NFS, CIFS, GlusterFS—treated as file-based and renamed accordingly)  
+* **LVM** logical volumes
+* **ZFS** datasets & snapshots
+* **File-based** images under `storage/images/<VMID>/…`
+  (treats NFS, CIFS, GlusterFS, CephFS mounts exactly like local files)
 
-## Planned in a future update
+---
 
-• ZFS datasets & snapshots support  
-• Hook scripts & Cloud-Init integration (detect & rename related scripts)  
-• Quorum verification before operations (skippable via manual override)  
-• Replication job updates (in addition to vzdump)  
-• Firewall rule parsing and VMID renaming if the VM uses firewall or references its ID  
-• Improved VM/LXC lock/unlock handling to avoid .lock conflicts  
+## Usage Steps
+
+1. Become root
+2. Run the bash command above
+3. Enter **old VMID** and **new VMID** when prompted
+4. Confirm clean shutdown and review the summary
+5. On confirmation, the script renames everything in one go
+
+---
 
 ## Security & Integrity
 
-• No external connections—only accesses local Proxmox cluster and filesystems  
-• Uses Proxmox CLI/API (`pvesh`, `qm`, `pct`) exclusively  
-• All operations logged locally; no credentials or data are exfiltrated  
+* **No external connections**
+  Uses only local Proxmox APIs and mounted filesystems.
+* **Read-only until confirmation**
+  Every destructive change is gated behind a “Yes/No” prompt.
+* **Fully logged**
+  All actions go into `rename-vmid.sh.log` in your current directory.
+
+---
 
 ## License
 
-GPL v3
+Distributed under **GPL v3**.
 
-## Support
+---
 
-Report issues or contribute on GitHub:  
+## Get Help or Contribute
+
+Open an issue or submit a PR on GitHub:
 [https://github.com/sannier3/proxmox-vmid-updater/issues](https://github.com/sannier3/proxmox-vmid-updater/issues)
