@@ -504,9 +504,10 @@ while true; do
   # Update any references in the new config file
   sed -i "s/snap_vm-${ID_OLD}-disk-/snap_vm-${ID_NEW}-disk-/g" "$CONF_DIR/$ID_NEW.conf"
   
-  # 16.c-d) Rename all file-based volumes in place
-  # Build a map of storage ID → storage path
+  # 16.c-d) Rename all file-based volumes in place, with correct images/ prefix
   declare -A ST_PATH
+  
+  # Build a map of storage ID → storage path
   for st in $(printf '%s\n' "${FILE_OLD[@]}" | cut -d: -f1 | sort -u); do
     ST_PATH[$st]=$(pvesh get /storage/"$st" --output-format=json \
                    | grep -Po '"path"\s*:\s*"\K[^"]+' )
@@ -514,21 +515,22 @@ while true; do
   
   # Loop over each file-based volume and rename it
   for vol in "${FILE_OLD[@]}"; do
-    st=${vol%%:*}           # storage ID, e.g. local-lvm or SCSI1-DIR
-    rel=${vol#*:}           # relative path, e.g. 101/vm-101-disk-0.raw
+    st=${vol%%:*}           # storage ID
+    rel=${vol#*:}           # e.g. "101/vm-101-disk-0.raw"
   
-    oldf="${ST_PATH[$st]}/$rel"
+    # old and new full paths under the images/ directory
+    oldf="${ST_PATH[$st]}/images/$rel"
     newrel="${rel//$ID_OLD/$ID_NEW}"
-    newf="${ST_PATH[$st]}/$newrel"
+    newf="${ST_PATH[$st]}/images/$newrel"
   
     if [[ -e "$oldf" ]]; then
-      # Ensure the target directory exists
+      # create target directory if missing
       mkdir -p "$(dirname "$newf")"
   
-      # Move the file
+      # move the actual disk file
       mv "$oldf" "$newf"
   
-      # Update the new config file to reference the renamed volume
+      # update config to reference the new path
       sed -i "s|$st:$rel|$st:$newrel|g" "$CONF_DIR/$ID_NEW.conf"
   
       log "File: $oldf → $newf"
