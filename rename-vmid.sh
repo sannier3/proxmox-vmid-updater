@@ -371,26 +371,35 @@ while true; do
   )
   log "Raw LVM snapshot volumes: ${SNAP_LV_OLD[*]}"
   
-  ### 12) Classify volumes LVM vs file
+  ### 12) Classify volumes: LVM, ZFS, or file-based
   LVM_OLD=()
+  ZFS_OLD=()
   FILE_OLD=()
   for vol in "${VOL_OLD[@]}"; do
     st=${vol%%:*}; rel=${vol#*:}
+    # skip inactive storages
     if ! printf '%s\n' "${ACTIVE_STORAGES[@]}" | grep -qx "$st"; then
       log "Skipping volume $vol: storage '$st' not active"
       continue
     fi
-    stype=$(pvesh get /storage/"$st" --output-format=json 2>/dev/null \
-            | grep -Po '"type"\s*:\s*"\K[^"]+' || echo "")
+  
+    # fetch storage type
+    st_json=$(pvesh get /storage/"$st" --output-format=json 2>/dev/null || echo '{}')
+    stype=$(grep -Po '"type"\s*:\s*"\K[^"]+' <<<"$st_json" || echo "")
+  
     if [[ "$stype" =~ lvm ]]; then
       LVM_OLD+=("$vol")
+    elif [[ "$stype" == "zfspool" ]]; then
+      ZFS_OLD+=("$vol")
     else
       FILE_OLD+=("$vol")
     fi
   done
   mapfile -t FILE_OLD < <(printf "%s\n" "${FILE_OLD[@]}" | sort -u)
+  
   log "LVM volumes: ${LVM_OLD[*]}"
-  log "File volumes (deduped): ${FILE_OLD[*]}"
+  log "ZFS volumes: ${ZFS_OLD[*]}"
+  log "File volumes: ${FILE_OLD[*]}"
   
   ### 13) Gather backups
   BKDIRS=(/var/lib/vz/dump /mnt/pve/*/dump)
@@ -504,54 +513,58 @@ while true; do
   # Update any references in the new config file
   sed -i "s/snap_vm-${ID_OLD}-disk-/snap_vm-${ID_NEW}-disk-/g" "$CONF_DIR/$ID_NEW.conf"
   
-  # 16.c-d) Rename all file-based volumes in place, with correct images/ prefix
+  # 16.c) Rename ZFS volumes
+  # Build a map of storage ID → zfs pool
+  declare -A ZFS_POOL
+  for st in $(printf '%s\n' "${ZFS_OLD[@]}" | cut -d: -f1 | sort -u); do
+    ZFS_POOL[$st]=$(pvesh get /storage/"$st" --output-format=json \
+                    | grep -Po '"pool"\s*:\s*"\K[^"]+' )
+  done
+
+  # Loop over each ZFS volume and rename it
+  for vol in "${ZFS_OLD[@]}"; do
+    st=${vol%%:*}            # storage ID, e.g. SCSI3-ZFS
+    rel=${vol#*:}            # dataset name, e.g. vm-302-disk-0
+
+    pool=${ZFS_POOL[$st]}
+    old_ds="${pool}/${rel}"
+    newrel="${rel//$ID_OLD/$ID_NEW}"
+    new_ds="${pool}/${newrel}"
+
+    # perform the zfs rename
+    zfs rename "$old_ds" "$new_ds"
+
+    # update config to reference the new dataset
+    sed -i "s|$st:$rel|$st:$newrel|g" "$CONF_DIR/$ID_NEW.conf"
+
+    log "ZFS: $old_ds → $new_ds"
+  done
+
+  # 16.d) Rename all file-based volumes in place, with correct images/ prefix
   declare -A ST_PATH
-  
+
   # Build a map of storage ID → storage path
   for st in $(printf '%s\n' "${FILE_OLD[@]}" | cut -d: -f1 | sort -u); do
     ST_PATH[$st]=$(pvesh get /storage/"$st" --output-format=json \
                    | grep -Po '"path"\s*:\s*"\K[^"]+' )
   done
-  
+
   # Loop over each file-based volume and rename it
   for vol in "${FILE_OLD[@]}"; do
     st=${vol%%:*}           # storage ID
-    rel=${vol#*:}           # e.g. "101/vm-101-disk-0.raw"
-  
-    # old and new full paths under the images/ directory
+    rel=${vol#*:}           # e.g. "302/vm-302-disk-0.qcow2"
+
     oldf="${ST_PATH[$st]}/images/$rel"
     newrel="${rel//$ID_OLD/$ID_NEW}"
     newf="${ST_PATH[$st]}/images/$newrel"
-  
+
     if [[ -e "$oldf" ]]; then
-      # create target directory if missing
       mkdir -p "$(dirname "$newf")"
-  
-      # move the actual disk file
       mv "$oldf" "$newf"
-  
-      # update config to reference the new path
       sed -i "s|$st:$rel|$st:$newrel|g" "$CONF_DIR/$ID_NEW.conf"
-  
       log "File: $oldf → $newf"
     else
       log "⚠️  File not found, skipped: $oldf"
-    fi
-  done
-  
-  # 16.e) Rename vmstate files
-  for s in "${VMSTATE_OLD[@]}"; do
-    st=${s%%:*}; rel=${s#*:}
-    fn=$(basename "$rel")
-    dir="${ST_PATH[$st]}/images/$ID_NEW"
-    oldfile="$dir/$fn"
-    newfile="$dir/${fn//$ID_OLD/$ID_NEW}"
-    if [[ -f "$oldfile" ]]; then
-      mv "$oldfile" "$newfile"
-      sed -i "s|^vmstate:[[:space:]]*$st:$rel|vmstate: $st:${rel//$ID_OLD/$ID_NEW}|" "$CONF_DIR/$ID_NEW.conf"
-      log "VMSTATE: $oldfile → $newfile"
-    else
-      log "⚠️  VMSTATE file not found, skipped: $oldfile"
     fi
   done
   
