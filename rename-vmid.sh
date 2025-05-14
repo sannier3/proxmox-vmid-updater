@@ -420,6 +420,12 @@ while true; do
     echo "------------------------------------------------------"
     echo; echo "• Config:"
     echo "    $CONF_PATH → $CONF_DIR/$ID_NEW.conf"
+    echo; echo "• ZFS volumes:"
+    for vol in "${ZFS_OLD[@]}"; do
+      st=${vol%%:*}; oldds=${vol#*:}
+      newds="${oldds//$ID_OLD/$ID_NEW}"
+      echo "    $st: $oldds → $newds"
+    done
     echo; echo "• LVM volumes:"
     for vol in "${LVM_OLD[@]}"; do
       st=${vol%%:*}; oldlv=${vol#*:}
