@@ -16,6 +16,8 @@ log(){
 ### 0) Must be root
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Please run as root!" >&2
+  read -n1 -r -p "Press any key to continue…" 
+  clear
   exit 1
 fi
 log "Running as root confirmed"
@@ -34,6 +36,8 @@ if (( ${#NEEDS[@]} )); then
     apt update && apt install -y "${NEEDS[@]}"
   else
     echo "Cannot continue without these tools." >&2
+    read -n1 -r -p "Press any key to continue…" 
+    clear
     exit 1
   fi
 fi
@@ -68,18 +72,35 @@ fi
 
 ### 2.5) Quorum check (if in cluster)
 if (( ${#CLUSTER_NODES[@]} > 1 )); then
-  # Extract “Yes” or “No” from the “Quorate:” line, trimming whitespace
-  QSTAT=$(pvecm status 2>/dev/null \
-    | awk -F: '/Quorate:/ { gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')
-  log "Cluster quorum status: $QSTAT"
+  # Temporarily disable “exit on error” so pvecm status can return non-zero
+  set +e
+  RAW_STATUS=$(pvecm status 2>&1)
+  RETVAL=$?
+  set -e
+
+  # If pvecm status failed, assume no quorum
+  if (( RETVAL != 0 )); then
+    QSTAT="No"
+    log "pvecm status failed (exit $RETVAL), assuming no quorum"
+  else
+    # Extract “Yes” or “No” from the “Quorate:” line
+    QSTAT=$(awk -F: '/Quorate:/ {
+      gsub(/^[ \t]+|[ \t]+$/, "", $2)
+      print $2
+    }' <<<"$RAW_STATUS")
+    log "Cluster quorum status: $QSTAT"
+  fi
+
   if [[ "$QSTAT" != "Yes" ]]; then
     dialog --title "❌ No Quorum" \
            --msgbox "\
 Cluster is not quorate (Quorate: $QSTAT).
 Please restore quorum before proceeding." 8 60
     log "ERROR: Cluster not quorate ($QSTAT) – aborting"
+    clear
     exit 1
   fi
+
   log "Cluster is quorate, proceeding"
 else
   log "Standalone mode – skipping quorum check"
@@ -224,6 +245,7 @@ while true; do
   fi
   if [[ ! -f "$CONF_PATH" ]]; then
     dialog --msgbox "Config not found: $CONF_PATH" 6 60
+    clear
     exit 1
   fi
   CONF_DIR=$(dirname "$CONF_PATH")
@@ -261,6 +283,7 @@ while true; do
       done
       if [[ "$STATE" != stopped ]]; then
         dialog --msgbox "Failed to stop." 6 40
+        clear
         exit 1
       fi
       log "Instance stopped"
@@ -303,6 +326,7 @@ while true; do
   
   Please verify the storage is online and the LV exists." 10 60
         log "ERROR: Missing LVM volume $vg/$lv_name on storage $st"
+        clear
         exit 1
       fi
     else
@@ -319,6 +343,7 @@ while true; do
   
   Please verify the filesystem is mounted and the file exists." 10 60
         log "ERROR: Missing disk file $disk_file on storage $st"
+        clear
         exit 1
       fi
     fi
