@@ -504,35 +504,33 @@ while true; do
   # Update any references in the new config file
   sed -i "s/snap_vm-${ID_OLD}-disk-/snap_vm-${ID_NEW}-disk-/g" "$CONF_DIR/$ID_NEW.conf"
   
-  # 16.c) Rename VM folders (file-based & unused)
+  # 16.c-d) Rename all file-based volumes in place
+  # Build a map of storage ID → storage path
   declare -A ST_PATH
-  for vol in "${FILE_OLD[@]}"; do
-    st=${vol%%:*}
-    if [[ -z "${ST_PATH[$st]:-}" ]]; then
-      ST_PATH[$st]=$(pvesh get /storage/"$st" --output-format=json \
-                     | grep -Po '"path"\s*:\s*"\K[^"]+' )
-      oldd="${ST_PATH[$st]}/images/$ID_OLD"
-      newd="${ST_PATH[$st]}/images/$ID_NEW"
-      if [[ -d "$oldd" ]]; then
-        mv "$oldd" "$newd"
-        log "Folder: $oldd → $newd"
-      else
-        log "⚠️  Folder not found, skipped: $oldd"
-      fi
-    fi
+  for st in $(printf '%s\n' "${FILE_OLD[@]}" | cut -d: -f1 | sort -u); do
+    ST_PATH[$st]=$(pvesh get /storage/"$st" --output-format=json \
+                   | grep -Po '"path"\s*:\s*"\K[^"]+' )
   done
   
-  # 16.d) Rename volumes inside new folder
+  # Loop over each file-based volume and rename it
   for vol in "${FILE_OLD[@]}"; do
-    st=${vol%%:*}; rel=${vol#*:}
-    oldf="${ST_PATH[$st]}/images/$ID_NEW/$(basename "$rel")"
-    newf="${ST_PATH[$st]}/images/$ID_NEW/$(basename "${rel//$ID_OLD/$ID_NEW}")"
-    if [[ -f "$oldf" ]]; then
+    st=${vol%%:*}           # storage ID, e.g. local-lvm or SCSI1-DIR
+    rel=${vol#*:}           # relative path, e.g. 101/vm-101-disk-0.raw
+  
+    oldf="${ST_PATH[$st]}/$rel"
+    newrel="${rel//$ID_OLD/$ID_NEW}"
+    newf="${ST_PATH[$st]}/$newrel"
+  
+    if [[ -e "$oldf" ]]; then
+      # Ensure the target directory exists
+      mkdir -p "$(dirname "$newf")"
+  
+      # Move the file
       mv "$oldf" "$newf"
-      escaped_st=$(printf '%s' "$st" | sed 's/[&/\]/\\&/g')
-      escaped_rel=$(printf '%s' "$rel" | sed 's/[&/\]/\\&/g')
-      escaped_rel_new=$(printf '%s' "${rel//$ID_OLD/$ID_NEW}" | sed 's/[&/\]/\\&/g')
-      sed -i "s|$escaped_st:$escaped_rel|$escaped_st:$escaped_rel_new|g" "$CONF_DIR/$ID_NEW.conf"
+  
+      # Update the new config file to reference the renamed volume
+      sed -i "s|$st:$rel|$st:$newrel|g" "$CONF_DIR/$ID_NEW.conf"
+  
       log "File: $oldf → $newf"
     else
       log "⚠️  File not found, skipped: $oldf"
