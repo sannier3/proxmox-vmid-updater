@@ -1,7 +1,3 @@
-Here’s the updated **README** for **v1.2.0**, in plain English and natural markdown formatting:
-
----
-
 # PROXMOX-VMID-UPDATER  v1.2.0
 
 Interactive Bash script to safely rename a QEMU VM or LXC container VMID on Proxmox VE, with:
