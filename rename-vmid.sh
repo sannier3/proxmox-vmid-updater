@@ -594,6 +594,16 @@ Please verify the filesystem is mounted and the file exists." 10 60
   # 16.f) Move backups
   for f in "${BK_OLD[@]}"; do
     nf="${f//-$ID_OLD-/-$ID_NEW-}"
+    # Check if src and dest are exactly the same file path
+    if [[ "$f" == "$nf" ]]; then
+      log "Backup source and target are the same: $f (skipping)"
+      continue
+    fi
+    # Optional: also check inode (same file, hard link case)
+    if [[ -e "$nf" && "$(stat -c '%d:%i' "$f")" == "$(stat -c '%d:%i' "$nf")" ]]; then
+      log "Backup source and target are the same file (inode): $f (skipping)"
+      continue
+    fi
     if [[ -e "$f" ]]; then
       mv "$f" "$nf"
       log "Backup: $f → $nf"
