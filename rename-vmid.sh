@@ -564,32 +564,43 @@ Please verify the filesystem is mounted and the file exists." 10 60
   done
 
   # 16.d) Rename all file-based volumes in place, with correct images/ prefix
-  declare -A ST_PATH
+  if (( ${#FILE_OLD[@]} > 0 )); then
+    declare -A ST_PATH
 
-  # Build a map of storage ID → storage path
-  for st in $(printf '%s\n' "${FILE_OLD[@]}" | cut -d: -f1 | sort -u); do
-    ST_PATH[$st]=$(pvesh get /storage/"$st" --output-format=json \
-                   | grep -Po '"path"\s*:\s*"\K[^"]+' )
-  done
+    # Build a map of storage ID → storage path (use read to avoid word splitting & empty-iteration)
+    while IFS= read -r st; do
+      [[ -z "$st" ]] && continue
+      ST_PATH[$st]=$(pvesh get /storage/"$st" --output-format=json 2>/dev/null \
+                     | grep -Po '"path"\s*:\s*"\K[^"]+' || echo "")
+    done < <(printf '%s\n' "${FILE_OLD[@]}" | cut -d: -f1 | sort -u)
 
-  # Loop over each file-based volume and rename it
-  for vol in "${FILE_OLD[@]}"; do
-    st=${vol%%:*}           # storage ID
-    rel=${vol#*:}           # e.g. "302/vm-302-disk-0.qcow2"
+    # Loop over each file-based volume and rename it
+    for vol in "${FILE_OLD[@]}"; do
+      st=${vol%%:*}           # storage ID
+      rel=${vol#*:}           # e.g. "302/vm-302-disk-0.qcow2"
+      [[ -z "$st" ]] && continue
 
-    oldf="${ST_PATH[$st]}/images/$rel"
-    newrel="${rel//$ID_OLD/$ID_NEW}"
-    newf="${ST_PATH[$st]}/images/$newrel"
+      # Skip if storage path not found (avoids "bad array subscript" with set -u)
+      if [[ ! -v ST_PATH[$st] ]] || [[ -z "${ST_PATH[$st]}" ]]; then
+        log "⚠️  No path for storage '$st', skipped: $vol"
+        continue
+      fi
+      path="${ST_PATH[$st]}"
 
-    if [[ -e "$oldf" ]]; then
-      mkdir -p "$(dirname "$newf")"
-      mv "$oldf" "$newf"
-      sed -i "s|$st:$rel|$st:$newrel|g" "$CONF_DIR/$ID_NEW.conf"
-      log "File: $oldf → $newf"
-    else
-      log "⚠️  File not found, skipped: $oldf"
-    fi
-  done
+      oldf="${path}/images/$rel"
+      newrel="${rel//$ID_OLD/$ID_NEW}"
+      newf="${path}/images/$newrel"
+
+      if [[ -e "$oldf" ]]; then
+        mkdir -p "$(dirname "$newf")"
+        mv "$oldf" "$newf"
+        sed -i "s|$st:$rel|$st:$newrel|g" "$CONF_DIR/$ID_NEW.conf"
+        log "File: $oldf → $newf"
+      else
+        log "⚠️  File not found, skipped: $oldf"
+      fi
+    done
+  fi
   
   # 16.f) Move backups
   for f in "${BK_OLD[@]}"; do
