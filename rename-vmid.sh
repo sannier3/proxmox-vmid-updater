@@ -322,7 +322,7 @@ while true; do
             break
           fi
         done
-        $BUSY && (( NEXT++ )) || break
+        if $BUSY; then (( NEXT++ )); else break; fi
       done
   
       dialog --msgbox "\
@@ -686,7 +686,7 @@ Nothing was changed." 12 74
     if dialog --yesno "Instance is '${STATE:-unknown}'. Stop it now?" 7 50; then
       log "Stopping $TYPE $ID_OLD"
       if [[ "$TYPE" == qemu ]]; then qm shutdown "$ID_OLD" || true; else pct shutdown "$ID_OLD" || true; fi
-      for i in {1..20}; do
+      for _ in {1..20}; do
         sleep 3
         if [[ "$TYPE" == qemu ]]; then STATE=$(qm status "$ID_OLD" 2>/dev/null | awk '{print $2}')
         else STATE=$(pct status "$ID_OLD" 2>/dev/null | awk '{print $2}'); fi
