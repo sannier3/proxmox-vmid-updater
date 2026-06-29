@@ -50,7 +50,7 @@ Interactive Bash script to safely rename a QEMU VM or LXC container VMID on Prox
 ## Quick Run
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/sannier3/proxmox-vmid-updater/dev/rename-vmid.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/sannier3/proxmox-vmid-updater/main/rename-vmid.sh)"
 ```
 
 Then follow the interactive prompts.
